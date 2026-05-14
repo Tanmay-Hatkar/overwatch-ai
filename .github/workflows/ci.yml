@@ -1,0 +1,38 @@
+name: CI
+
+# When does this workflow run?
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# What jobs run? Jobs run in parallel by default.
+jobs:
+  check:
+    name: Repo structure check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Verify required documentation files exist
+        run: |
+          test -f README.md && echo "✓ README.md"
+          test -f CLAUDE.md && echo "✓ CLAUDE.md"
+          test -f CONTRIBUTING.md && echo "✓ CONTRIBUTING.md"
+          test -f .gitignore && echo "✓ .gitignore"
+          test -f .gitattributes && echo "✓ .gitattributes"
+          test -f docs/PRD.md && echo "✓ docs/PRD.md"
+          test -f docs/EDD.md && echo "✓ docs/EDD.md"
+          test -f docs/adr/README.md && echo "✓ docs/adr/README.md"
+          test -f docs/adr/template.md && echo "✓ docs/adr/template.md"
+
+      - name: Placeholder for real tests
+        run: |
+          echo "─────────────────────────────────────────"
+          echo " Real tests will be added in slice 1."
+          echo " This step exists so 'CI' shows as a"
+          echo " required status check in branch protection."
+          echo "─────────────────────────────────────────"

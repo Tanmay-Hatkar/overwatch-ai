@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/*
+ * App-wide custom styles beyond Tailwind utility classes go here.
+ * For now Tailwind utilities cover everything we need; this file mostly
+ * exists to import Tailwind into the build.
+ */

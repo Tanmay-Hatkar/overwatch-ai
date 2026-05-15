@@ -3,7 +3,7 @@ name: CI
 # When does this workflow run?
 on:
   push:
-    branches: [main]
+    branches: ['**']   # every branch — get feedback before opening a PR
   pull_request:
     branches: [main]
 

@@ -1,0 +1,53 @@
+"""
+config.py — Application configuration loaded from environment variables.
+
+Uses pydantic-settings to load .env + OS env vars into a type-checked
+Settings object. Other modules import `settings` and reference fields
+directly — no more scattered os.getenv() calls.
+
+If a required variable is missing or malformed, the app fails fast at
+import time with a clear validation error. This is better than crashing
+mid-request later.
+"""
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """All app settings, loaded from .env and OS environment."""
+
+    # =========================================================================
+    # LLM providers — fallback chain: OpenAI -> Groq -> Ollama
+    # =========================================================================
+    openai_api_key: str = Field(default="", description="OpenAI API key (empty disables provider)")
+    openai_model: str = Field(default="gpt-4o-mini", description="OpenAI model identifier")
+
+    groq_api_key: str = Field(default="", description="Groq API key (empty disables provider)")
+    groq_model: str = Field(default="llama-3.1-8b-instant", description="Groq model identifier")
+
+    ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama HTTP base URL")
+    ollama_model: str = Field(default="llama3.2", description="Ollama model identifier")
+
+    # =========================================================================
+    # LLM behavior
+    # =========================================================================
+    llm_temperature: float = Field(default=0.7, description="Default temperature for creative tasks")
+    llm_intent_temperature: float = Field(default=0.0, description="Temperature for structured output")
+    llm_max_tokens: int = Field(default=500, description="Maximum tokens per response")
+
+    # =========================================================================
+    # Loader config
+    # =========================================================================
+    # env_file: load from backend/.env (relative to where uvicorn runs)
+    # extra="ignore": ignore unrecognized env vars (don't crash on stray ones)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,  # OPENAI_API_KEY in env -> openai_api_key in Python
+    )
+
+
+# Singleton instance. Import this everywhere: `from app.config import settings`
+settings = Settings()

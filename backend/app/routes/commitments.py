@@ -21,11 +21,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.database import get_db
 from app.models.commitment import (
     CommitmentCreate,
+    CommitmentParseRequest,
     CommitmentResponse,
     CommitmentStatus,
     CommitmentUpdate,
 )
 from app.repositories.commitment_repository import CommitmentRepository
+from app.services.commitment_parser_service import (
+    CommitmentParseError,
+    CommitmentParserService,
+)
 from app.services.commitment_service import CommitmentService
 
 router = APIRouter(prefix="/commitments", tags=["commitments"])
@@ -50,11 +55,36 @@ def create_commitment(
     service: CommitmentService = Depends(_build_service),
 ) -> CommitmentResponse:
     """
-    Create a new commitment.
+    Create a new commitment from structured input.
 
     Returns 201 with the created commitment in the body.
     """
     return service.create(payload)
+
+
+@router.post("/parse", response_model=CommitmentResponse, status_code=status.HTTP_201_CREATED)
+def parse_commitment(
+    payload: CommitmentParseRequest,
+    service: CommitmentService = Depends(_build_service),
+) -> CommitmentResponse:
+    """
+    Create a commitment from natural language via LLM parsing.
+
+    Body: {"message": "remind me to call mom tomorrow at 3pm"}
+    The LLM extracts the imperative text + optional due_at and creates
+    the commitment.
+
+    Returns 201 with the created commitment, or 503 if the LLM is
+    unavailable or returns unparseable output.
+    """
+    parser = CommitmentParserService(service)
+    try:
+        return parser.parse_and_create(payload.message)
+    except CommitmentParseError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not parse commitment: {e}",
+        )
 
 
 @router.get("", response_model=list[CommitmentResponse])

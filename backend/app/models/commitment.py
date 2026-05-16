@@ -94,3 +94,19 @@ class CommitmentResponse(CommitmentBase):
     # attributes (not just dicts). Useful when converting from a dataclass
     # or DB row object to a response.
     model_config = ConfigDict(from_attributes=True)
+
+
+class CommitmentParseRequest(BaseModel):
+    """
+    Schema for POST /commitments/parse.
+
+    The user sends a natural language message; the server uses an LLM to
+    extract text + due_at and creates the commitment.
+    """
+
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Free-form natural language describing the commitment.",
+    )

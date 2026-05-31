@@ -26,7 +26,7 @@ from app.services.commitment_service import CommitmentService
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:
-    """Create the commitments table on a fresh connection."""
+    """Create the commitments + briefings tables on a fresh connection."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS commitments (
             id          TEXT PRIMARY KEY,
@@ -35,6 +35,16 @@ def _create_tables(conn: sqlite3.Connection) -> None:
             status      TEXT NOT NULL,
             created_at  TEXT NOT NULL,
             updated_at  TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS briefings (
+            id            TEXT PRIMARY KEY,
+            date          TEXT NOT NULL UNIQUE,
+            content       TEXT NOT NULL,
+            today_count   INTEGER NOT NULL,
+            overdue_count INTEGER NOT NULL,
+            generated_at  TEXT NOT NULL
         )
     """)
     conn.commit()

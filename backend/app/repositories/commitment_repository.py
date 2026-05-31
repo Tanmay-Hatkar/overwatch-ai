@@ -156,6 +156,20 @@ class CommitmentRepository:
 
         return self.get(commitment_id)
 
+    def latest_update_time(self) -> datetime | None:
+        """
+        Return the most recent updated_at timestamp across all commitments,
+        or None if the table is empty.
+
+        Used by BriefingService to detect when its cached briefing is stale.
+        """
+        row = self._conn.execute(
+            "SELECT MAX(updated_at) AS latest FROM commitments"
+        ).fetchone()
+        if row is None or row["latest"] is None:
+            return None
+        return datetime.fromisoformat(row["latest"])
+
     def delete(self, commitment_id: UUID) -> bool:
         """
         Hard-delete a commitment by id.

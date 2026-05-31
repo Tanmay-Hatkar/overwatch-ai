@@ -1,14 +1,12 @@
 """
 briefings.py — FastAPI routes for morning briefings.
 
-Currently one endpoint:
-
   GET /briefings/today
-    Generates a fresh briefing for the current day. Returns 200 with the
-    briefing, or 503 if the LLM is unavailable.
+    Returns today's briefing. Hits the cache if it's fresh; otherwise
+    regenerates via LLM.
 
-No caching in slice 4 — every request hits the LLM. Future slices can
-add a `briefings` table + per-day caching with a regenerate endpoint.
+  GET /briefings/today?force_regenerate=true
+    Skips the cache and always regenerates. Used by the UI's refresh button.
 """
 
 import sqlite3
@@ -17,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.database import get_db
 from app.models.briefing import BriefingResponse
+from app.repositories.briefing_repository import BriefingRepository
 from app.repositories.commitment_repository import CommitmentRepository
 from app.services.briefing_service import BriefingGenerationError, BriefingService
 from app.services.commitment_service import CommitmentService
@@ -30,29 +29,37 @@ def _build_briefing_service(
     """
     Construct a BriefingService for one request.
 
-    FastAPI resolves the dependency chain:
-        route -> _build_briefing_service -> get_db (yields connection).
+    Resolves the full dependency chain:
+        route -> _build_briefing_service -> get_db (yields connection)
+        BriefingService( CommitmentService(CommitmentRepository),
+                         BriefingRepository )
 
     The connection is automatically closed when the request finishes.
     """
-    repo = CommitmentRepository(conn)
-    commitment_service = CommitmentService(repo)
-    return BriefingService(commitment_service)
+    commitment_repo = CommitmentRepository(conn)
+    commitment_service = CommitmentService(commitment_repo)
+    briefing_repo = BriefingRepository(conn)
+    return BriefingService(commitment_service, briefing_repo)
 
 
 @router.get("/today", response_model=BriefingResponse)
 def get_today_briefing(
+    force_regenerate: bool = False,
     service: BriefingService = Depends(_build_briefing_service),
 ) -> BriefingResponse:
     """
-    Generate a natural-language briefing for today.
+    Return today's briefing.
 
-    Pulls all open commitments, buckets them by due-date status, and asks
-    the LLM to summarize. Returns 200 with the briefing, or 503 if the
-    LLM is unavailable.
+    By default, returns the cached briefing if it's still fresh (no
+    commitments have been updated since it was generated). Pass
+    `?force_regenerate=true` to bypass the cache and call the LLM
+    regardless.
+
+    Returns 200 with the briefing, or 503 if the LLM is unavailable
+    when a fresh generation is needed.
     """
     try:
-        return service.generate_today()
+        return service.get_today(force_regenerate=force_regenerate)
     except BriefingGenerationError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

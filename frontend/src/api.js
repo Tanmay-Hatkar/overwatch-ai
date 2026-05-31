@@ -59,7 +59,8 @@ export async function deleteCommitment(id) {
 // Briefings
 // ---------------------------------------------------------------------------
 
-export async function getTodayBriefing() {
-  const response = await fetch('/briefings/today')
+export async function getTodayBriefing(force = false) {
+  const url = force ? '/briefings/today?force_regenerate=true' : '/briefings/today'
+  const response = await fetch(url)
   return jsonOrThrow(response)
 }

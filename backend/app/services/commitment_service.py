@@ -16,6 +16,7 @@ primitives. The service is the conversion seam between them.
 """
 
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from app.models.commitment import (
@@ -106,6 +107,20 @@ class CommitmentService:
             due_at=payload.due_at,
             status=payload.status,
         )
+
+    def latest_commitment_update(self) -> datetime | None:
+        """
+        Get the timestamp of the most recently updated commitment.
+
+        Used by BriefingService for cache freshness — if any commitment
+        has been touched since the cached briefing was generated, the
+        cache is stale.
+
+        Returns:
+            The latest updated_at timestamp, or None if there are no
+            commitments at all.
+        """
+        return self._repo.latest_update_time()
 
     def delete(self, commitment_id: UUID) -> bool:
         """

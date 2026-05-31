@@ -38,10 +38,10 @@ def get_connection() -> sqlite3.Connection:
 
 def init_db() -> None:
     """
-    Create the commitments table if it doesn't exist.
+    Create the commitments and briefings tables if they don't exist.
 
     Idempotent — safe to call on every app startup. Real schema migrations
-    will come later (Alembic), but for slice 1 this is sufficient.
+    will come later (Alembic) when the schema starts evolving in production.
     """
     conn = get_connection()
     try:
@@ -53,6 +53,16 @@ def init_db() -> None:
                 status      TEXT NOT NULL,
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS briefings (
+                id            TEXT PRIMARY KEY,
+                date          TEXT NOT NULL UNIQUE,
+                content       TEXT NOT NULL,
+                today_count   INTEGER NOT NULL,
+                overdue_count INTEGER NOT NULL,
+                generated_at  TEXT NOT NULL
             )
         """)
         conn.commit()

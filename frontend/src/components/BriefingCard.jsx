@@ -16,11 +16,14 @@ export default function BriefingCard({ refreshTrigger }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const load = useCallback(async () => {
+  // `force` bypasses the server-side cache. Used by the refresh button;
+  // not used by the auto-load on mount or by the commitment-change trigger
+  // (those rely on the backend's cache-freshness check).
+  const load = useCallback(async (force = false) => {
     setLoading(true)
     setError(null)
     try {
-      const data = await getTodayBriefing()
+      const data = await getTodayBriefing(force)
       setBriefing(data)
     } catch (err) {
       setError(err.message)
@@ -30,7 +33,7 @@ export default function BriefingCard({ refreshTrigger }) {
   }, [])
 
   useEffect(() => {
-    load()
+    load(false)
   }, [load, refreshTrigger])
 
   return (
@@ -44,7 +47,7 @@ export default function BriefingCard({ refreshTrigger }) {
             Today's Briefing
           </h2>
           <button
-            onClick={load}
+            onClick={() => load(true)}
             disabled={loading}
             className="text-[10px] uppercase tracking-widest text-zinc-600 hover:text-orange-500 disabled:opacity-50 transition-colors"
             aria-label="Regenerate briefing"

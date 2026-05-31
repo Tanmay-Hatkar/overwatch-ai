@@ -32,3 +32,7 @@ class BriefingResponse(BaseModel):
         ...,
         description="Timestamp when this briefing was generated.",
     )
+    cached: bool = Field(
+        default=False,
+        description="True if the briefing came from cache, False if freshly generated.",
+    )

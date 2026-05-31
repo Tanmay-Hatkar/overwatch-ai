@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { createCommitment, parseCommitment } from '../api'
 
 const MODE_STRUCTURED = 'structured'
@@ -12,8 +13,8 @@ const MODE_NATURAL = 'natural'
  *   - Natural Language: single text input. Server uses LLM to extract
  *     text + due_at. Sends to POST /commitments/parse.
  *
- * The mode is selected by a toggle at the top of the form. Local state
- * for input + flags is shared between modes (text is the input for both).
+ * Errors surface as toasts (via sonner). Local error state is gone —
+ * the toast container handles all user-visible feedback.
  */
 export default function CommitmentForm({ onCreated }) {
   const [mode, setMode] = useState(MODE_STRUCTURED)
@@ -21,13 +22,11 @@ export default function CommitmentForm({ onCreated }) {
   const [dueAt, setDueAt] = useState('')
   const [showDuePicker, setShowDuePicker] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState(null)
 
   function resetForm() {
     setText('')
     setDueAt('')
     setShowDuePicker(false)
-    setError(null)
   }
 
   async function handleSubmit(event) {
@@ -36,18 +35,23 @@ export default function CommitmentForm({ onCreated }) {
     if (!trimmed) return
 
     setSubmitting(true)
-    setError(null)
     try {
       if (mode === MODE_NATURAL) {
-        await parseCommitment(trimmed)
+        const result = await parseCommitment(trimmed)
+        toast.success(`Added: ${result.text}`)
       } else {
         const dueAtIso = dueAt ? new Date(dueAt).toISOString() : null
-        await createCommitment(trimmed, dueAtIso)
+        const result = await createCommitment(trimmed, dueAtIso)
+        toast.success(`Added: ${result.text}`)
       }
       resetForm()
       onCreated()
     } catch (err) {
-      setError(formatError(err, mode))
+      const msg =
+        mode === MODE_NATURAL && err.message.includes('503')
+          ? "Couldn't parse that. Try rephrasing or switch to Structured mode."
+          : err.message || 'Something went wrong.'
+      toast.error(msg)
     } finally {
       setSubmitting(false)
     }
@@ -61,25 +65,19 @@ export default function CommitmentForm({ onCreated }) {
       <div className="flex gap-1 mb-3">
         <ModeButton
           active={mode === MODE_STRUCTURED}
-          onClick={() => {
-            setMode(MODE_STRUCTURED)
-            setError(null)
-          }}
+          onClick={() => setMode(MODE_STRUCTURED)}
         >
           Structured
         </ModeButton>
         <ModeButton
           active={mode === MODE_NATURAL}
-          onClick={() => {
-            setMode(MODE_NATURAL)
-            setError(null)
-          }}
+          onClick={() => setMode(MODE_NATURAL)}
         >
           Natural Language
         </ModeButton>
       </div>
 
-      {/* Primary input row — shared between both modes */}
+      {/* Primary input row */}
       <div className="flex gap-2 flex-wrap">
         <input
           type="text"
@@ -103,7 +101,7 @@ export default function CommitmentForm({ onCreated }) {
         </button>
       </div>
 
-      {/* Structured mode: optional due-date picker */}
+      {/* Structured: optional due-date picker */}
       {!isNL && (
         <div className="mt-2">
           {!showDuePicker ? (
@@ -138,14 +136,11 @@ export default function CommitmentForm({ onCreated }) {
         </div>
       )}
 
-      {/* Natural-language mode: hint text */}
       {isNL && (
         <p className="text-xs text-zinc-600 mt-2">
           AI extracts the action and any time/date you mention.
         </p>
       )}
-
-      {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
     </form>
   )
 }
@@ -164,16 +159,4 @@ function ModeButton({ active, onClick, children }) {
       {children}
     </button>
   )
-}
-
-/**
- * Translate fetch errors into user-readable messages.
- * 503 from /parse means the LLM is unavailable or returned bad output.
- */
-function formatError(err, mode) {
-  const msg = err.message || 'Something went wrong.'
-  if (mode === MODE_NATURAL && msg.includes('503')) {
-    return "Couldn't parse that. Try rephrasing or switch to Structured mode."
-  }
-  return msg
 }

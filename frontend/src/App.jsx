@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Toaster } from 'sonner'
 import BriefingCard from './components/BriefingCard'
 import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
@@ -18,6 +19,9 @@ import './App.css'
  *
  * useReminders polls the commitments and fires browser notifications when
  * any of them become due.
+ *
+ * <Toaster> mounts a single notification container. Anywhere in the tree,
+ * `toast.success("…")` or `toast.error("…")` will appear here.
  */
 function App() {
   const [commitments, setCommitments] = useState([])
@@ -42,9 +46,6 @@ function App() {
     refresh()
   }, [refresh])
 
-  // Surgical follow-up reminders — fires browser notifications when
-  // commitments become due. Quietly no-ops if notification permission
-  // isn't granted.
   useReminders(commitments)
 
   return (
@@ -72,6 +73,19 @@ function App() {
           )}
         </main>
       </div>
+
+      {/* Toast notifications — themed to match our dark + orange aesthetic. */}
+      <Toaster
+        position="bottom-right"
+        theme="dark"
+        toastOptions={{
+          style: {
+            background: '#141414',
+            border: '1px solid #2a2a2a',
+            color: '#f5f5f5',
+          },
+        }}
+      />
     </div>
   )
 }

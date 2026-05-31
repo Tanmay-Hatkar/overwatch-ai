@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { updateCommitment, deleteCommitment } from '../api'
 
 /**
@@ -17,18 +18,34 @@ export default function CommitmentList({ commitments, onChange }) {
 
   async function handleToggleDone(commitment) {
     const newStatus = commitment.status === 'done' ? 'open' : 'done'
-    await updateCommitment(commitment.id, { status: newStatus })
-    onChange()
+    try {
+      await updateCommitment(commitment.id, { status: newStatus })
+      if (newStatus === 'done') {
+        toast.success(`Done: ${commitment.text}`)
+      }
+      onChange()
+    } catch (err) {
+      toast.error(err.message || "Couldn't update commitment.")
+    }
   }
 
   async function handleDelete(commitment) {
-    await deleteCommitment(commitment.id)
-    onChange()
+    try {
+      await deleteCommitment(commitment.id)
+      toast.success(`Deleted: ${commitment.text}`)
+      onChange()
+    } catch (err) {
+      toast.error(err.message || "Couldn't delete commitment.")
+    }
   }
 
   async function handleEdit(commitment, newText) {
-    await updateCommitment(commitment.id, { text: newText })
-    onChange()
+    try {
+      await updateCommitment(commitment.id, { text: newText })
+      onChange()
+    } catch (err) {
+      toast.error(err.message || "Couldn't save edit.")
+    }
   }
 
   const open = commitments.filter((c) => c.status === 'open')

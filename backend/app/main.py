@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from app.database import init_db
-from app.routes import commitments
+from app.routes import briefings, commitments
 
 
 @asynccontextmanager
@@ -43,6 +43,10 @@ app = FastAPI(
 # Mount the commitments router. All routes defined in app/routes/commitments.py
 # become available under /commitments.
 app.include_router(commitments.router)
+
+# Mount the briefings router. All routes defined in app/routes/briefings.py
+# become available under /briefings.
+app.include_router(briefings.router)
 
 
 @app.get("/health")

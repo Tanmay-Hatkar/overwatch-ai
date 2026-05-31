@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import BriefingCard from './components/BriefingCard'
 import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
 import { listCommitments } from './api'
@@ -7,22 +8,24 @@ import './App.css'
 /**
  * Top-level component.
  *
- * Holds the commitments list state. Loads from the API on mount and
- * exposes a refresh() callback that children call after any mutation.
+ * Holds:
+ *  - The commitments list state (loaded from the API on mount)
+ *  - A `commitmentsVersion` counter that increments on any mutation; the
+ *    BriefingCard listens to this and regenerates the briefing whenever
+ *    commitments change.
  */
 function App() {
   const [commitments, setCommitments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [commitmentsVersion, setCommitmentsVersion] = useState(0)
 
-  // useCallback so the reference is stable across renders — important
-  // because refresh is passed as a prop to children. Without it, children
-  // would re-render every time even when nothing changed.
   const refresh = useCallback(async () => {
     setError(null)
     try {
       const data = await listCommitments()
       setCommitments(data)
+      setCommitmentsVersion((v) => v + 1)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -30,7 +33,6 @@ function App() {
     }
   }, [])
 
-  // Load commitments once when the component mounts.
   useEffect(() => {
     refresh()
   }, [refresh])
@@ -46,6 +48,8 @@ function App() {
         </header>
 
         <main>
+          <BriefingCard refreshTrigger={commitmentsVersion} />
+
           <CommitmentForm onCreated={refresh} />
 
           {loading ? (

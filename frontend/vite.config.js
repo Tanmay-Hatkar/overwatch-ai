@@ -7,10 +7,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      // Forward /commitments/* requests to the FastAPI backend on port 8000.
+      // Forward backend requests to FastAPI on port 8000.
       // Avoids CORS issues — from the browser's perspective everything is
       // same-origin (localhost:5173). Vite handles the cross-port forwarding.
       '/commitments': 'http://localhost:8000',
+      '/briefings': 'http://localhost:8000',
     },
   },
 })

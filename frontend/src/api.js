@@ -32,6 +32,15 @@ export async function createCommitment(text, dueAt = null) {
   return jsonOrThrow(response)
 }
 
+export async function parseCommitment(message) {
+  const response = await fetch('/commitments/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })
+  return jsonOrThrow(response)
+}
+
 export async function updateCommitment(id, changes) {
   const response = await fetch(`/commitments/${id}`, {
     method: 'PATCH',
@@ -43,5 +52,14 @@ export async function updateCommitment(id, changes) {
 
 export async function deleteCommitment(id) {
   const response = await fetch(`/commitments/${id}`, { method: 'DELETE' })
+  return jsonOrThrow(response)
+}
+
+// ---------------------------------------------------------------------------
+// Briefings
+// ---------------------------------------------------------------------------
+
+export async function getTodayBriefing() {
+  const response = await fetch('/briefings/today')
   return jsonOrThrow(response)
 }

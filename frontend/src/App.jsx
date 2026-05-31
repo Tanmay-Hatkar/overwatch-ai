@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import BriefingCard from './components/BriefingCard'
 import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
+import NotificationStatus from './components/NotificationStatus'
+import { useReminders } from './hooks/useReminders'
 import { listCommitments } from './api'
 import './App.css'
 
@@ -13,6 +15,9 @@ import './App.css'
  *  - A `commitmentsVersion` counter that increments on any mutation; the
  *    BriefingCard listens to this and regenerates the briefing whenever
  *    commitments change.
+ *
+ * useReminders polls the commitments and fires browser notifications when
+ * any of them become due.
  */
 function App() {
   const [commitments, setCommitments] = useState([])
@@ -37,6 +42,11 @@ function App() {
     refresh()
   }, [refresh])
 
+  // Surgical follow-up reminders — fires browser notifications when
+  // commitments become due. Quietly no-ops if notification permission
+  // isn't granted.
+  useReminders(commitments)
+
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-[#f5f5f5]">
       <div className="max-w-2xl mx-auto px-6 py-12">
@@ -50,6 +60,7 @@ function App() {
         <main>
           <BriefingCard refreshTrigger={commitmentsVersion} />
 
+          <NotificationStatus />
           <CommitmentForm onCreated={refresh} />
 
           {loading ? (

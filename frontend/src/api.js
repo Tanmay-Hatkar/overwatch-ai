@@ -64,3 +64,12 @@ export async function getTodayBriefing(force = false) {
   const response = await fetch(url)
   return jsonOrThrow(response)
 }
+
+// ---------------------------------------------------------------------------
+// Stats
+// ---------------------------------------------------------------------------
+
+export async function getTodayStats() {
+  const response = await fetch('/stats/today')
+  return jsonOrThrow(response)
+}

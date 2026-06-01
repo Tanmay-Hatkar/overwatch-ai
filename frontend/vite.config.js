@@ -12,6 +12,7 @@ export default defineConfig({
       // same-origin (localhost:5173). Vite handles the cross-port forwarding.
       '/commitments': 'http://localhost:8000',
       '/briefings': 'http://localhost:8000',
+      '/stats': 'http://localhost:8000',
     },
   },
 })

@@ -4,6 +4,8 @@ import BriefingCard from './components/BriefingCard'
 import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
 import NotificationStatus from './components/NotificationStatus'
+import SettingsPanel from './components/SettingsPanel'
+import StatsBar from './components/StatsBar'
 import { useReminders } from './hooks/useReminders'
 import { listCommitments } from './api'
 import './App.css'
@@ -14,8 +16,9 @@ import './App.css'
  * Holds:
  *  - The commitments list state (loaded from the API on mount)
  *  - A `commitmentsVersion` counter that increments on any mutation; the
- *    BriefingCard listens to this and regenerates the briefing whenever
+ *    BriefingCard + StatsBar listen to this and refresh whenever
  *    commitments change.
+ *  - `settingsOpen` toggles the settings overlay.
  *
  * useReminders polls the commitments and fires browser notifications when
  * any of them become due.
@@ -28,6 +31,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [commitmentsVersion, setCommitmentsVersion] = useState(0)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -51,15 +55,27 @@ function App() {
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-[#f5f5f5]">
       <div className="max-w-2xl mx-auto px-6 py-12">
-        <header className="mb-10">
-          <h1 className="text-3xl font-bold text-orange-500 mb-1 tracking-tight">
-            Overwatch
-          </h1>
-          <p className="text-zinc-500 text-sm">Things you said you'd do.</p>
+        <header className="mb-10 flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-orange-500 mb-1 tracking-tight">
+              Overwatch
+            </h1>
+            <p className="text-zinc-500 text-sm">Things you said you'd do.</p>
+          </div>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="text-zinc-600 hover:text-orange-500 transition-colors p-2"
+            aria-label="Open settings"
+            title="Settings"
+          >
+            <SettingsIcon />
+          </button>
         </header>
 
         <main>
           <BriefingCard refreshTrigger={commitmentsVersion} />
+
+          <StatsBar refreshTrigger={commitmentsVersion} />
 
           <NotificationStatus />
           <CommitmentForm onCreated={refresh} />
@@ -74,6 +90,8 @@ function App() {
         </main>
       </div>
 
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
       {/* Toast notifications — themed to match our dark + orange aesthetic. */}
       <Toaster
         position="bottom-right"
@@ -87,6 +105,25 @@ function App() {
         }}
       />
     </div>
+  )
+}
+
+/** Simple gear icon. SVG inline so no extra dependency. */
+function SettingsIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
   )
 }
 

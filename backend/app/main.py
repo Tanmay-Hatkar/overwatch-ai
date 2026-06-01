@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from app.database import init_db
-from app.routes import briefings, commitments
+from app.routes import briefings, commitments, stats
 
 
 @asynccontextmanager
@@ -47,6 +47,9 @@ app.include_router(commitments.router)
 # Mount the briefings router. All routes defined in app/routes/briefings.py
 # become available under /briefings.
 app.include_router(briefings.router)
+
+# Stats endpoint — completion counts, streak, 7-day series.
+app.include_router(stats.router)
 
 
 @app.get("/health")

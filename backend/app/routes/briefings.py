@@ -17,7 +17,9 @@ from app.database import get_db
 from app.models.briefing import BriefingResponse
 from app.repositories.briefing_repository import BriefingRepository
 from app.repositories.commitment_repository import CommitmentRepository
+from app.routes.calendar import get_calendar_service
 from app.services.briefing_service import BriefingGenerationError, BriefingService
+from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
 
 router = APIRouter(prefix="/briefings", tags=["briefings"])
@@ -25,21 +27,25 @@ router = APIRouter(prefix="/briefings", tags=["briefings"])
 
 def _build_briefing_service(
     conn: sqlite3.Connection = Depends(get_db),
+    calendar_service: CalendarService = Depends(get_calendar_service),
 ) -> BriefingService:
     """
     Construct a BriefingService for one request.
 
     Resolves the full dependency chain:
         route -> _build_briefing_service -> get_db (yields connection)
+                                         -> get_calendar_service (singleton)
         BriefingService( CommitmentService(CommitmentRepository),
-                         BriefingRepository )
+                         BriefingRepository,
+                         CalendarService )
 
     The connection is automatically closed when the request finishes.
+    The calendar service is a long-lived singleton (no per-request state).
     """
     commitment_repo = CommitmentRepository(conn)
     commitment_service = CommitmentService(commitment_repo)
     briefing_repo = BriefingRepository(conn)
-    return BriefingService(commitment_service, briefing_repo)
+    return BriefingService(commitment_service, briefing_repo, calendar_service)
 
 
 @router.get("/today", response_model=BriefingResponse)

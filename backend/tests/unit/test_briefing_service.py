@@ -16,8 +16,10 @@ import pytest
 
 from app.models.briefing import BriefingResponse
 from app.models.commitment import CommitmentCreate, CommitmentStatus, CommitmentUpdate
+from app.providers.mock_calendar_provider import MockCalendarProvider
 from app.repositories.briefing_repository import BriefingRepository
 from app.services.briefing_service import BriefingGenerationError, BriefingService
+from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
 
 LLM_PATCH_TARGET = "app.services.briefing_service.call_llm"
@@ -209,3 +211,42 @@ def test_force_regenerate_skips_cache(briefing_service: BriefingService) -> None
         briefing_service.get_today(force_regenerate=True)
 
     assert mock.call_count == 2  # both calls hit the LLM
+
+
+# ---------------------------------------------------------------------------
+# Calendar event injection
+# ---------------------------------------------------------------------------
+
+
+def test_briefing_without_calendar_service_renders_no_events(
+    briefing_service: BriefingService,
+) -> None:
+    """A briefing service without a calendar service injects '(none)' for events."""
+    with patch(LLM_PATCH_TARGET, return_value="OK briefing.") as mock:
+        briefing_service.generate_today()
+
+    user_prompt = mock.call_args.kwargs["user_prompt"]
+    # When no calendar service is wired, the events count should be 0
+    assert "Calendar events for today (0):" in user_prompt
+    assert "(none)" in user_prompt
+
+
+def test_briefing_with_calendar_service_injects_events(
+    service: CommitmentService, briefing_repo: BriefingRepository
+) -> None:
+    """When a calendar service is wired, events appear in the prompt."""
+    calendar_service = CalendarService(MockCalendarProvider())
+    service_with_cal = BriefingService(service, briefing_repo, calendar_service)
+
+    with patch(LLM_PATCH_TARGET, return_value="OK briefing.") as mock:
+        service_with_cal.generate_today()
+
+    user_prompt = mock.call_args.kwargs["user_prompt"]
+    # Mock provider returns events on weekdays, none on weekends —
+    # we just verify the prompt has the events section formatted correctly
+    assert "Calendar events for today" in user_prompt
+    # On weekdays, the mock provider returns 3 named events
+    if date.today().weekday() < 5:
+        assert "Daily standup" in user_prompt
+        assert "Lunch with Alex" in user_prompt
+        assert "1:1 with manager" in user_prompt

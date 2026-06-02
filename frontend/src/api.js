@@ -73,3 +73,17 @@ export async function getTodayStats() {
   const response = await fetch('/stats/today')
   return jsonOrThrow(response)
 }
+
+// ---------------------------------------------------------------------------
+// Calendar
+// ---------------------------------------------------------------------------
+
+export async function getTodayEvents() {
+  const response = await fetch('/calendar/today')
+  return jsonOrThrow(response)
+}
+
+export async function getWeekEvents() {
+  const response = await fetch('/calendar/week')
+  return jsonOrThrow(response)
+}

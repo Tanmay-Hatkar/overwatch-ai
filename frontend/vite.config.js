@@ -13,6 +13,7 @@ export default defineConfig({
       '/commitments': 'http://localhost:8000',
       '/briefings': 'http://localhost:8000',
       '/stats': 'http://localhost:8000',
+      '/calendar': 'http://localhost:8000',
     },
   },
 })

@@ -6,6 +6,7 @@ import CommitmentList from './components/CommitmentList'
 import NotificationStatus from './components/NotificationStatus'
 import SettingsPanel from './components/SettingsPanel'
 import StatsBar from './components/StatsBar'
+import WeeklyCalendar from './components/WeeklyCalendar'
 import { useReminders } from './hooks/useReminders'
 import { listCommitments } from './api'
 import './App.css'
@@ -74,6 +75,11 @@ function App() {
 
         <main>
           <BriefingCard refreshTrigger={commitmentsVersion} />
+
+          <WeeklyCalendar
+            commitments={commitments}
+            refreshTrigger={commitmentsVersion}
+          />
 
           <StatsBar refreshTrigger={commitmentsVersion} />
 

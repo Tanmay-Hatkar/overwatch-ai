@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from app.database import init_db
-from app.routes import briefings, commitments, stats
+from app.routes import briefings, calendar, commitments, stats
 
 
 @asynccontextmanager
@@ -50,6 +50,11 @@ app.include_router(briefings.router)
 
 # Stats endpoint — completion counts, streak, 7-day series.
 app.include_router(stats.router)
+
+# Calendar endpoints — read events from the configured CalendarProvider.
+# Currently uses MockCalendarProvider; swap to GoogleCalendarProvider when
+# OAuth credentials are set up.
+app.include_router(calendar.router)
 
 
 @app.get("/health")

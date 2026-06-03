@@ -3,10 +3,10 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 
-// Register the service worker for PWA installability.
-// Only in production builds — the dev server doesn't need it and registering
-// in dev can cause stale-cache surprises during development.
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
+// Register the service worker. In dev AND prod — we need it active for
+// Web Push to work, and our SW has no caching strategy (fetch handler is
+// a no-op) so there's no stale-cache risk during development.
+if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js', { scope: '/' })

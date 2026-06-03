@@ -4,6 +4,7 @@ import BriefingCard from './components/BriefingCard'
 import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
 import NotificationStatus from './components/NotificationStatus'
+import PushSetup from './components/PushSetup'
 import SettingsPanel from './components/SettingsPanel'
 import StatsBar from './components/StatsBar'
 import WeeklyCalendar from './components/WeeklyCalendar'
@@ -84,6 +85,7 @@ function App() {
           <StatsBar refreshTrigger={commitmentsVersion} />
 
           <NotificationStatus />
+          <PushSetup />
           <CommitmentForm onCreated={refresh} />
 
           {loading ? (

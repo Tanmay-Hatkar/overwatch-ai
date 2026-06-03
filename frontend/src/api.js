@@ -87,3 +87,35 @@ export async function getWeekEvents() {
   const response = await fetch('/calendar/week')
   return jsonOrThrow(response)
 }
+
+// ---------------------------------------------------------------------------
+// Web Push subscriptions
+// ---------------------------------------------------------------------------
+
+export async function getVapidPublicKey() {
+  const response = await fetch('/push/vapid-public-key')
+  return jsonOrThrow(response)
+}
+
+export async function subscribeToPush(subscription) {
+  const response = await fetch('/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(subscription),
+  })
+  return jsonOrThrow(response)
+}
+
+export async function unsubscribeFromPush(endpoint) {
+  const response = await fetch('/push/unsubscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  })
+  return jsonOrThrow(response)
+}
+
+export async function sendTestPush() {
+  const response = await fetch('/push/test', { method: 'POST' })
+  return jsonOrThrow(response)
+}

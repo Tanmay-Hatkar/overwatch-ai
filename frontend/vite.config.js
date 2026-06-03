@@ -14,6 +14,7 @@ export default defineConfig({
       '/briefings': 'http://localhost:8000',
       '/stats': 'http://localhost:8000',
       '/calendar': 'http://localhost:8000',
+      '/push': 'http://localhost:8000',
     },
   },
 })

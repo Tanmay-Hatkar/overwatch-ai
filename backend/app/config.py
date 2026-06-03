@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=500, description="Maximum tokens per response")
 
     # =========================================================================
+    # Web Push notifications (VAPID)
+    # =========================================================================
+    vapid_public_key: str = Field(default="", description="VAPID public key (base64url)")
+    vapid_private_key: str = Field(default="", description="VAPID private key (base64url, secret)")
+    vapid_subject: str = Field(
+        default="mailto:admin@example.com",
+        description="VAPID subject (mailto: URL identifying the app)",
+    )
+    reminder_poll_interval_seconds: int = Field(
+        default=60,
+        description="How often the reminder scheduler checks for newly-overdue commitments",
+    )
+
+    # =========================================================================
     # Loader config
     # =========================================================================
     # env_file: load from backend/.env (relative to where uvicorn runs)

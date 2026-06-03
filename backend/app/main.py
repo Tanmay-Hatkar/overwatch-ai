@@ -7,30 +7,52 @@ Run with:
 The --reload flag auto-restarts the server on file changes (dev only).
 """
 
-from contextlib import asynccontextmanager
+import logging
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.database import init_db
-from app.routes import briefings, calendar, commitments, stats
+from app.routes import briefings, calendar, commitments, push, stats
+from app.routes.push import get_push_service
+from app.services.reminder_scheduler import ReminderScheduler
+
+logger = logging.getLogger(__name__)
+
+# Module-level scheduler holder — lifespan populates it on startup,
+# accessor below returns it for FastAPI dependencies.
+_scheduler: ReminderScheduler | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
-    Lifespan context — code that runs at app startup (before yield)
-    and shutdown (after yield).
+    Lifespan context — startup before yield, shutdown after.
 
-    The `_app` parameter is required by FastAPI's lifespan contract but
-    isn't used here. The underscore prefix signals intentional non-use.
-
-    Used to initialize the database schema once on startup.
+    Responsibilities:
+      1. Initialize the SQLite schema (idempotent).
+      2. Start the ReminderScheduler background task, which polls
+         commitments and fires push notifications when items become due.
     """
-    # Startup
+    global _scheduler
+
     init_db()
+
+    push_service = get_push_service()
+    if push_service.is_configured:
+        _scheduler = ReminderScheduler(push_service)
+        _scheduler.start()
+    else:
+        logger.info(
+            "VAPID not configured — skipping ReminderScheduler. "
+            "Set VAPID_PRIVATE_KEY to enable push notifications."
+        )
+
     yield
-    # Shutdown — nothing to clean up yet
+
+    if _scheduler is not None:
+        await _scheduler.stop()
 
 
 app = FastAPI(
@@ -40,21 +62,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Mount the commitments router. All routes defined in app/routes/commitments.py
-# become available under /commitments.
+# Commitments — CRUD + natural language parsing
 app.include_router(commitments.router)
 
-# Mount the briefings router. All routes defined in app/routes/briefings.py
-# become available under /briefings.
+# Briefings — daily LLM-generated summary with cache
 app.include_router(briefings.router)
 
-# Stats endpoint — completion counts, streak, 7-day series.
+# Stats — completion counts, streak, 7-day series
 app.include_router(stats.router)
 
-# Calendar endpoints — read events from the configured CalendarProvider.
-# Currently uses MockCalendarProvider; swap to GoogleCalendarProvider when
-# OAuth credentials are set up.
+# Calendar — events from the configured CalendarProvider
+# (auto-detected: token.json present → Google, else Mock)
 app.include_router(calendar.router)
+
+# Push — subscribe/unsubscribe + test broadcast for Web Push notifications
+app.include_router(push.router)
 
 
 @app.get("/health")

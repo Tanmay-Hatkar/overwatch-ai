@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Toaster } from 'sonner'
 import BriefingCard from './components/BriefingCard'
+import ChatBar from './components/ChatBar'
 import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
 import NotificationStatus from './components/NotificationStatus'
@@ -56,7 +57,8 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-[#f5f5f5]">
-      <div className="max-w-2xl mx-auto px-6 py-12">
+      {/* Bottom padding leaves room for the fixed ChatBar so nothing is hidden */}
+      <div className="max-w-2xl mx-auto px-6 py-12 pb-40">
         <header className="mb-10 flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-orange-500 mb-1 tracking-tight">
@@ -99,6 +101,11 @@ function App() {
       </div>
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {/* ChatBar — fixed at the bottom, talks to /chat. Triggers a refresh
+          whenever an add_commitment intent succeeds so the list/calendar/
+          briefing pick up the new commitment without a manual reload. */}
+      <ChatBar onAction={refresh} />
 
       {/* Toast notifications — themed to match our dark + orange aesthetic. */}
       <Toaster

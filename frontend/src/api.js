@@ -119,3 +119,16 @@ export async function sendTestPush() {
   const response = await fetch('/push/test', { method: 'POST' })
   return jsonOrThrow(response)
 }
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+export async function sendChat(message, history = []) {
+  const response = await fetch('/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history }),
+  })
+  return jsonOrThrow(response)
+}

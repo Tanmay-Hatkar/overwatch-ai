@@ -1,0 +1,206 @@
+"""
+chat_service.py — The conversational chat router.
+
+A single LLM call does TWO jobs:
+  1. Classify intent (add_commitment | query | general)
+  2. Generate a natural-language reply
+
+For add_commitment, the LLM also extracts text + due_at and we persist
+the new commitment before returning.
+
+For query, the LLM is given the user's open + overdue commitments and
+today's events as context. It answers from that data, never inventing.
+
+For general, the LLM just chats. No DB writes.
+
+Failure handling: if the LLM returns invalid JSON or is unavailable,
+raise ChatError. The route turns this into a 503 with a user-readable
+message.
+"""
+
+import json
+import logging
+from datetime import UTC, date, datetime, timedelta
+
+from app.agents.orchestrator import call_llm
+from app.config import settings
+from app.models.chat import (
+    ChatIntent,
+    ChatRequest,
+    ChatResponse,
+    _ChatIntentResult,
+)
+from app.models.commitment import CommitmentCreate, CommitmentResponse, CommitmentStatus
+from app.prompts.chat import SYSTEM_PROMPT, USER_TEMPLATE
+from app.services.calendar_service import CalendarService
+from app.services.commitment_service import CommitmentService
+
+logger = logging.getLogger(__name__)
+
+
+class ChatError(Exception):
+    """Raised when the LLM is unavailable or returns unparseable output."""
+
+
+class ChatService:
+    """
+    Conversational router that turns user messages into actions + replies.
+
+    Composes CommitmentService (so we can create commitments + read current
+    state) and CalendarService (so query intents can mention meetings).
+    """
+
+    def __init__(
+        self,
+        commitment_service: CommitmentService,
+        calendar_service: CalendarService | None = None,
+    ) -> None:
+        self._service = commitment_service
+        self._calendar = calendar_service
+
+    def handle(self, request: ChatRequest) -> ChatResponse:
+        """Process one chat message end-to-end."""
+        user_prompt = self._build_user_prompt(request)
+
+        raw = call_llm(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=settings.llm_intent_temperature,
+        )
+
+        if raw is None:
+            raise ChatError("LLM unavailable — no provider succeeded")
+
+        result = self._parse_json(raw)
+
+        commitment: CommitmentResponse | None = None
+        if result.intent == "add_commitment":
+            commitment = self._create_commitment(result)
+
+        return ChatResponse(
+            reply=result.reply,
+            intent=result.intent,
+            commitment=commitment,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_user_prompt(self, request: ChatRequest) -> str:
+        today = datetime.now()
+        day_names = [
+            "Monday", "Tuesday", "Wednesday", "Thursday",
+            "Friday", "Saturday", "Sunday",
+        ]
+
+        # 14-day lookup, same as the standalone parser (ADR 0003)
+        lookup_lines = []
+        for i in range(14):
+            d = today + timedelta(days=i)
+            marker = " (today)" if i == 0 else " (tomorrow)" if i == 1 else ""
+            lookup_lines.append(f"  {d.date().isoformat()} — {day_names[d.weekday()]}{marker}")
+        date_table = "\n".join(lookup_lines)
+
+        # Pull current state for query intent
+        open_items = self._service.list(status=CommitmentStatus.OPEN)
+        today_date = date.today()
+
+        today_open = [c for c in open_items if c.due_at and c.due_at.date() == today_date]
+        overdue = [c for c in open_items if c.due_at and c.due_at.date() < today_date]
+
+        open_list = self._format_commitment_list(today_open) if today_open else "  (none)"
+        overdue_list = self._format_commitment_list(overdue) if overdue else "  (none)"
+
+        # Today's calendar events
+        events_list = "  (none)"
+        events_count = 0
+        if self._calendar is not None:
+            events = self._calendar.list_today(today_date)
+            events_count = len(events)
+            if events:
+                lines = []
+                for e in events:
+                    time_str = e.start_at.strftime("%I:%M %p").lstrip("0")
+                    lines.append(f"  - {time_str} {e.title}")
+                events_list = "\n".join(lines)
+
+        # Recent conversation — format each turn as "User: ..." / "Assistant: ..."
+        if request.history:
+            convo_lines = []
+            for turn in request.history[-10:]:  # cap at last 10 turns
+                speaker = "User" if turn.role == "user" else "Assistant"
+                convo_lines.append(f"  {speaker}: {turn.content}")
+            conversation = "\n".join(convo_lines)
+        else:
+            conversation = "  (no prior turns)"
+
+        return USER_TEMPLATE.format(
+            today_name=day_names[today.weekday()],
+            today_date=today.date().isoformat(),
+            date_table=date_table,
+            open_count=len(today_open),
+            open_list=open_list,
+            overdue_count=len(overdue),
+            overdue_list=overdue_list,
+            events_count=events_count,
+            events_list=events_list,
+            conversation=conversation,
+            message=request.message,
+        )
+
+    @staticmethod
+    def _format_commitment_list(commitments: list[CommitmentResponse]) -> str:
+        lines = []
+        for c in commitments:
+            if c.due_at:
+                time_str = c.due_at.strftime("%I:%M %p").lstrip("0")
+                lines.append(f"  - {c.text} (due {time_str})")
+            else:
+                lines.append(f"  - {c.text}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_json(raw: str) -> _ChatIntentResult:
+        """Strip markdown fences, parse JSON, validate against schema."""
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+            cleaned = cleaned.rsplit("```", 1)[0]
+
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Chat LLM returned non-JSON: {raw!r}")
+            raise ChatError(f"LLM output was not valid JSON: {e}") from e
+
+        try:
+            return _ChatIntentResult(**data)
+        except Exception as e:
+            logger.warning(f"Chat LLM returned malformed structured output: {data!r}")
+            raise ChatError(f"LLM output missing required fields: {e}") from e
+
+    def _create_commitment(
+        self, result: _ChatIntentResult
+    ) -> CommitmentResponse | None:
+        """For add_commitment intents, persist the extracted commitment."""
+        text = (result.text or "").strip()
+        if not text:
+            # LLM classified as add_commitment but didn't give us a usable title.
+            # Don't fail the whole turn — just skip the create and use the reply.
+            logger.warning("add_commitment intent missing text; skipping create")
+            return None
+
+        due_at: datetime | None = None
+        if result.due_at:
+            try:
+                due_at = datetime.fromisoformat(result.due_at)
+                # Treat naive ISO as local time (matches frontend's behavior in the
+                # standard parser) — keep tz-aware in UTC for storage.
+                if due_at.tzinfo is None:
+                    due_at = due_at.replace(tzinfo=UTC)
+            except (ValueError, TypeError):
+                logger.warning(f"chat: invalid due_at dropped: {result.due_at!r}")
+
+        payload = CommitmentCreate(text=text, due_at=due_at)
+        return self._service.create(payload)

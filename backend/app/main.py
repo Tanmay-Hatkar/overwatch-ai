@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.database import init_db
-from app.routes import briefings, calendar, commitments, push, stats
+from app.routes import briefings, calendar, chat, commitments, push, stats
 from app.routes.push import get_push_service
 from app.services.reminder_scheduler import ReminderScheduler
 
@@ -77,6 +77,9 @@ app.include_router(calendar.router)
 
 # Push — subscribe/unsubscribe + test broadcast for Web Push notifications
 app.include_router(push.router)
+
+# Chat — conversational entry point. POST /chat handles message + history.
+app.include_router(chat.router)
 
 
 @app.get("/health")

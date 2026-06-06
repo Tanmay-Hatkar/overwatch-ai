@@ -6,53 +6,75 @@
  * can catch + display errors.
  *
  * Uses relative paths (/commitments). Vite's dev server proxies them
- * to http://localhost:8000 (configured in vite.config.js).
+ * to http://localhost:8000 (configured in vite.config.js). In production
+ * (Vercel), VITE_API_BASE_URL points at the Railway backend URL.
+ *
+ * Every request sends credentials (cookies) so the session JWT travels
+ * with each call.
  */
 
-async function jsonOrThrow(response) {
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+
+/**
+ * Wrapped fetch with credentials and a stable base URL prefix.
+ * All callers should go through this rather than raw fetch() so that
+ * cookie behavior + base URL stay consistent.
+ */
+async function apiFetch(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: 'include',
+    ...options,
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  })
+
   if (!response.ok) {
+    // Surface 401 specially — callers can react with "redirect to login".
+    if (response.status === 401) {
+      const err = new Error('Not signed in')
+      err.status = 401
+      throw err
+    }
     throw new Error(`HTTP ${response.status}: ${response.statusText}`)
   }
   if (response.status === 204) return null
   return await response.json()
 }
 
+// ---------------------------------------------------------------------------
+// Commitments
+// ---------------------------------------------------------------------------
+
 export async function listCommitments(statusFilter = null) {
   const params = statusFilter ? `?status_filter=${statusFilter}` : ''
-  const response = await fetch(`/commitments${params}`)
-  return jsonOrThrow(response)
+  return apiFetch(`/commitments${params}`)
 }
 
 export async function createCommitment(text, dueAt = null) {
-  const response = await fetch('/commitments', {
+  return apiFetch('/commitments', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, due_at: dueAt }),
   })
-  return jsonOrThrow(response)
 }
 
 export async function parseCommitment(message) {
-  const response = await fetch('/commitments/parse', {
+  return apiFetch('/commitments/parse', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
   })
-  return jsonOrThrow(response)
 }
 
 export async function updateCommitment(id, changes) {
-  const response = await fetch(`/commitments/${id}`, {
+  return apiFetch(`/commitments/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(changes),
   })
-  return jsonOrThrow(response)
 }
 
 export async function deleteCommitment(id) {
-  const response = await fetch(`/commitments/${id}`, { method: 'DELETE' })
-  return jsonOrThrow(response)
+  return apiFetch(`/commitments/${id}`, { method: 'DELETE' })
 }
 
 // ---------------------------------------------------------------------------
@@ -60,9 +82,8 @@ export async function deleteCommitment(id) {
 // ---------------------------------------------------------------------------
 
 export async function getTodayBriefing(force = false) {
-  const url = force ? '/briefings/today?force_regenerate=true' : '/briefings/today'
-  const response = await fetch(url)
-  return jsonOrThrow(response)
+  const path = force ? '/briefings/today?force_regenerate=true' : '/briefings/today'
+  return apiFetch(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -70,8 +91,7 @@ export async function getTodayBriefing(force = false) {
 // ---------------------------------------------------------------------------
 
 export async function getTodayStats() {
-  const response = await fetch('/stats/today')
-  return jsonOrThrow(response)
+  return apiFetch('/stats/today')
 }
 
 // ---------------------------------------------------------------------------
@@ -79,13 +99,11 @@ export async function getTodayStats() {
 // ---------------------------------------------------------------------------
 
 export async function getTodayEvents() {
-  const response = await fetch('/calendar/today')
-  return jsonOrThrow(response)
+  return apiFetch('/calendar/today')
 }
 
 export async function getWeekEvents() {
-  const response = await fetch('/calendar/week')
-  return jsonOrThrow(response)
+  return apiFetch('/calendar/week')
 }
 
 // ---------------------------------------------------------------------------
@@ -93,31 +111,25 @@ export async function getWeekEvents() {
 // ---------------------------------------------------------------------------
 
 export async function getVapidPublicKey() {
-  const response = await fetch('/push/vapid-public-key')
-  return jsonOrThrow(response)
+  return apiFetch('/push/vapid-public-key')
 }
 
 export async function subscribeToPush(subscription) {
-  const response = await fetch('/push/subscribe', {
+  return apiFetch('/push/subscribe', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(subscription),
   })
-  return jsonOrThrow(response)
 }
 
 export async function unsubscribeFromPush(endpoint) {
-  const response = await fetch('/push/unsubscribe', {
+  return apiFetch('/push/unsubscribe', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint }),
   })
-  return jsonOrThrow(response)
 }
 
 export async function sendTestPush() {
-  const response = await fetch('/push/test', { method: 'POST' })
-  return jsonOrThrow(response)
+  return apiFetch('/push/test', { method: 'POST' })
 }
 
 // ---------------------------------------------------------------------------
@@ -125,10 +137,35 @@ export async function sendTestPush() {
 // ---------------------------------------------------------------------------
 
 export async function sendChat(message, history = []) {
-  const response = await fetch('/chat', {
+  return apiFetch('/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, history }),
   })
-  return jsonOrThrow(response)
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the current signed-in user. Returns null (not throw) on 401 so
+ * callers can distinguish "not signed in" from a real error.
+ */
+export async function getCurrentUser() {
+  try {
+    return await apiFetch('/auth/me')
+  } catch (err) {
+    if (err.status === 401) return null
+    throw err
+  }
+}
+
+/** Navigate the whole window to Google's OAuth consent screen. */
+export function startGoogleLogin() {
+  window.location.href = `${API_BASE}/auth/google/login`
+}
+
+/** Clear the session cookie on the server. */
+export async function logout() {
+  return apiFetch('/auth/logout', { method: 'POST' })
 }

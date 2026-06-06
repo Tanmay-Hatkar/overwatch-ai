@@ -7,6 +7,8 @@ briefings.py — FastAPI routes for morning briefings.
 
   GET /briefings/today?force_regenerate=true
     Skips the cache and always regenerates. Used by the UI's refresh button.
+
+Auth required — every briefing is scoped to the signed-in user.
 """
 
 import sqlite3
@@ -15,8 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.database import get_db
 from app.models.briefing import BriefingResponse
+from app.models.user import UserResponse
 from app.repositories.briefing_repository import BriefingRepository
 from app.repositories.commitment_repository import CommitmentRepository
+from app.routes.auth import current_user
 from app.routes.calendar import get_calendar_service
 from app.services.briefing_service import BriefingGenerationError, BriefingService
 from app.services.calendar_service import CalendarService
@@ -51,10 +55,11 @@ def _build_briefing_service(
 @router.get("/today", response_model=BriefingResponse)
 def get_today_briefing(
     force_regenerate: bool = False,
+    user: UserResponse = Depends(current_user),
     service: BriefingService = Depends(_build_briefing_service),
 ) -> BriefingResponse:
     """
-    Return today's briefing.
+    Return today's briefing for the signed-in user.
 
     By default, returns the cached briefing if it's still fresh (no
     commitments have been updated since it was generated). Pass
@@ -65,7 +70,7 @@ def get_today_briefing(
     when a fresh generation is needed.
     """
     try:
-        return service.get_today(force_regenerate=force_regenerate)
+        return service.get_today(user.id, force_regenerate=force_regenerate)
     except BriefingGenerationError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

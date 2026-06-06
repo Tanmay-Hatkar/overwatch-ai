@@ -51,6 +51,46 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
+    # Authentication (Google OAuth + JWT sessions)
+    # =========================================================================
+    google_client_id: str = Field(
+        default="",
+        description="Google OAuth 2.0 client ID (from GCP console)",
+    )
+    google_client_secret: str = Field(
+        default="",
+        description="Google OAuth 2.0 client secret (from GCP console, keep secret)",
+    )
+    session_secret: str = Field(
+        default="",
+        description="HS256 signing key for JWT session cookies (32+ random chars)",
+    )
+    session_cookie_name: str = Field(
+        default="ow_session",
+        description="Name of the cookie that stores the JWT session",
+    )
+    session_max_age_days: int = Field(
+        default=30,
+        description="JWT expiry window. Refreshed when within session_refresh_within_days of expiry.",
+    )
+    session_refresh_within_days: int = Field(
+        default=7,
+        description="If a JWT is within this many days of expiry, /auth/me re-issues a fresh one.",
+    )
+    backend_url: str = Field(
+        default="http://localhost:8000",
+        description="Public URL of this backend (used to build the OAuth redirect_uri)",
+    )
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        description="Public URL of the frontend (used for post-login redirect + CORS)",
+    )
+    environment: str = Field(
+        default="development",
+        description="One of: development | production. Drives cookie Secure flag, log format.",
+    )
+
+    # =========================================================================
     # Loader config
     # =========================================================================
     # env_file: load from backend/.env (relative to where uvicorn runs)

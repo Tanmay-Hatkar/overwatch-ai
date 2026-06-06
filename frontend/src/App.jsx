@@ -4,17 +4,58 @@ import BriefingCard from './components/BriefingCard'
 import ChatBar from './components/ChatBar'
 import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
+import LoginScreen from './components/LoginScreen'
 import NotificationStatus from './components/NotificationStatus'
 import PushSetup from './components/PushSetup'
 import SettingsPanel from './components/SettingsPanel'
 import StatsBar from './components/StatsBar'
 import WeeklyCalendar from './components/WeeklyCalendar'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useReminders } from './hooks/useReminders'
 import { listCommitments } from './api'
 import './App.css'
 
 /**
- * Top-level component.
+ * Root export wraps the app in <AuthProvider> so every component below
+ * (and our useAuth hook) sees the same auth state.
+ */
+export default function App() {
+  return (
+    <AuthProvider>
+      <Gate />
+    </AuthProvider>
+  )
+}
+
+/**
+ * Gate decides which top-level view to render based on auth state:
+ *
+ *   loading  → a quiet placeholder (don't flash LoginScreen briefly)
+ *   no user  → <LoginScreen>
+ *   user     → <Overwatch>
+ *
+ * We keep Gate separate from <Overwatch> so the inner app gets fresh
+ * mount + state every time someone logs in or out.
+ */
+function Gate() {
+  const { user, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0f0f0f] flex items-center justify-center">
+        <p className="text-zinc-700 text-xs uppercase tracking-widest">Loading…</p>
+      </div>
+    )
+  }
+
+  if (!user) return <LoginScreen />
+
+  return <Overwatch />
+}
+
+/**
+ * The signed-in experience. Identical to the pre-auth App, with the
+ * addition of a tiny user widget in the header.
  *
  * Holds:
  *  - The commitments list state (loaded from the API on mount)
@@ -29,7 +70,8 @@ import './App.css'
  * <Toaster> mounts a single notification container. Anywhere in the tree,
  * `toast.success("…")` or `toast.error("…")` will appear here.
  */
-function App() {
+function Overwatch() {
+  const { user, logout } = useAuth()
   const [commitments, setCommitments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -66,14 +108,17 @@ function App() {
             </h1>
             <p className="text-zinc-500 text-sm">Things you said you'd do.</p>
           </div>
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="text-zinc-600 hover:text-orange-500 transition-colors p-2"
-            aria-label="Open settings"
-            title="Settings"
-          >
-            <SettingsIcon />
-          </button>
+          <div className="flex items-center gap-2">
+            <UserBadge user={user} onLogout={logout} />
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="text-zinc-600 hover:text-orange-500 transition-colors p-2"
+              aria-label="Open settings"
+              title="Settings"
+            >
+              <SettingsIcon />
+            </button>
+          </div>
         </header>
 
         <main>
@@ -123,6 +168,59 @@ function App() {
   )
 }
 
+/**
+ * Small avatar + name display in the top-right of the header. Clicking
+ * opens a tiny dropdown with a Sign out button.
+ */
+function UserBadge({ user, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const initials = (user.name || user.email || '?')
+    .split(' ')
+    .map((s) => s[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/[0.04] rounded-lg transition-colors"
+        aria-label="Account menu"
+      >
+        {user.picture ? (
+          <img
+            src={user.picture}
+            alt=""
+            className="w-7 h-7 rounded-full border border-white/10"
+          />
+        ) : (
+          <span className="w-7 h-7 rounded-full bg-orange-500/20 border border-orange-500/40 text-orange-300 text-[11px] font-semibold flex items-center justify-center">
+            {initials}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 mt-2 w-48 bg-[#141414] border border-white/[0.06] rounded-lg shadow-lg overflow-hidden z-50"
+          onMouseLeave={() => setOpen(false)}
+        >
+          <div className="px-3 py-2 border-b border-white/[0.06]">
+            <p className="text-sm text-zinc-200 truncate">{user.name}</p>
+            <p className="text-[11px] text-zinc-500 truncate">{user.email}</p>
+          </div>
+          <button
+            onClick={onLogout}
+            className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-white/[0.04] hover:text-red-400 transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Simple gear icon. SVG inline so no extra dependency. */
 function SettingsIcon() {
   return (
@@ -141,5 +239,3 @@ function SettingsIcon() {
     </svg>
   )
 }
-
-export default App

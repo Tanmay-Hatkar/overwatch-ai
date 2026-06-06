@@ -7,12 +7,14 @@ dependencies = [
     "fastapi>=0.136",
     "uvicorn>=0.46",
     "pydantic>=2.13",
+    "pydantic[email]>=2.13",
     "pydantic-settings>=2.0",
     "requests>=2.32",
     "google-api-python-client>=2.0",
     "google-auth>=2.0",
     "google-auth-oauthlib>=1.0",
     "pywebpush>=2.0",
+    "pyjwt>=2.9",
 ]
 
 [project.optional-dependencies]

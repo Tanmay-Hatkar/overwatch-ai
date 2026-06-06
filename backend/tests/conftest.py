@@ -11,6 +11,10 @@ Strategy:
     to the test database.
   - client: a FastAPI TestClient with the get_db dependency overridden to
     use the test database. Lets us hit real HTTP endpoints in tests.
+
+Schema setup uses the real migration runner (app.migrations.run_migrations)
+so tests exercise the same SQL that production runs. Drift between test
+fixture SQL and production schema is impossible by construction.
 """
 
 import sqlite3
@@ -21,42 +25,14 @@ from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
+from app.migrations import run_migrations
 from app.repositories.commitment_repository import CommitmentRepository
 from app.services.commitment_service import CommitmentService
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:
-    """Create the commitments + briefings tables on a fresh connection."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS commitments (
-            id          TEXT PRIMARY KEY,
-            text        TEXT NOT NULL,
-            due_at      TEXT,
-            status      TEXT NOT NULL,
-            created_at  TEXT NOT NULL,
-            updated_at  TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS briefings (
-            id            TEXT PRIMARY KEY,
-            date          TEXT NOT NULL UNIQUE,
-            content       TEXT NOT NULL,
-            today_count   INTEGER NOT NULL,
-            overdue_count INTEGER NOT NULL,
-            generated_at  TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS push_subscriptions (
-            id          TEXT PRIMARY KEY,
-            endpoint    TEXT NOT NULL UNIQUE,
-            p256dh      TEXT NOT NULL,
-            auth        TEXT NOT NULL,
-            created_at  TEXT NOT NULL
-        )
-    """)
-    conn.commit()
+    """Apply all migrations to a fresh test connection."""
+    run_migrations(conn)
 
 
 @pytest.fixture

@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.database import init_db
-from app.routes import briefings, calendar, chat, commitments, push, stats
+from app.routes import auth, briefings, calendar, chat, commitments, push, stats
 from app.routes.push import get_push_service
 from app.services.reminder_scheduler import ReminderScheduler
 
@@ -80,6 +80,11 @@ app.include_router(push.router)
 
 # Chat — conversational entry point. POST /chat handles message + history.
 app.include_router(chat.router)
+
+# Auth — Google OAuth sign-in + session cookie management.
+# Provides /auth/google/login, /auth/google/callback, /auth/me, /auth/logout
+# and the `current_user` FastAPI dependency used by other routes for auth-gating.
+app.include_router(auth.router)
 
 
 @app.get("/health")

@@ -7,6 +7,11 @@ Other layers (services, routes) call the repository; they never write SQL.
 
 This is the Repository Pattern: encapsulate data access behind a stable
 interface so the rest of the codebase doesn't depend on storage details.
+
+Multi-tenancy: every method takes a user_id as its first parameter. The
+repository transparently filters reads and stamps writes with that id.
+There is no "list everything across users" path — that boundary is the
+safety net against accidental cross-tenant data leaks.
 """
 
 import sqlite3
@@ -33,12 +38,14 @@ class CommitmentRepository:
         """
         self._conn = conn
 
-    def create(self, text: str, due_at: datetime | None) -> CommitmentResponse:
+    def create(
+        self, user_id: UUID, text: str, due_at: datetime | None
+    ) -> CommitmentResponse:
         """
-        Insert a new commitment row. Server assigns id, status='open',
-        and the created_at/updated_at timestamps.
+        Insert a new commitment row owned by the given user.
 
         Args:
+            user_id: Owner of the commitment.
             text: The commitment statement.
             due_at: Optional due timestamp.
 
@@ -52,42 +59,50 @@ class CommitmentRepository:
 
         self._conn.execute(
             """
-            INSERT INTO commitments (id, text, due_at, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO commitments (id, user_id, text, due_at, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id, text, due_at_str, status, now, now),
+            (new_id, str(user_id), text, due_at_str, status, now, now),
         )
         self._conn.commit()
 
-        # We just inserted it; get() should never return None here.
-        result = self.get(UUID(new_id))
+        result = self.get(user_id, UUID(new_id))
         assert result is not None, "Just-inserted commitment unexpectedly missing"
         return result
 
-    def get(self, commitment_id: UUID) -> CommitmentResponse | None:
+    def get(self, user_id: UUID, commitment_id: UUID) -> CommitmentResponse | None:
         """
-        Fetch a single commitment by id.
+        Fetch a single commitment by id, scoped to its owner.
+
+        A commitment belonging to a different user is invisible — same
+        behavior as if it didn't exist. This is the right default for
+        a multi-tenant system.
 
         Args:
+            user_id: Owner of the commitment.
             commitment_id: The UUID of the commitment.
 
         Returns:
-            The commitment as a CommitmentResponse, or None if not found.
+            The commitment as a CommitmentResponse, or None if not found
+            (or owned by a different user).
         """
         row = self._conn.execute(
-            "SELECT * FROM commitments WHERE id = ?",
-            (str(commitment_id),),
+            "SELECT * FROM commitments WHERE id = ? AND user_id = ?",
+            (str(commitment_id), str(user_id)),
         ).fetchone()
-
         return self._row_to_response(row) if row is not None else None
 
-    def list(self, status: CommitmentStatus | None = None) -> list[CommitmentResponse]:
+    def list(
+        self,
+        user_id: UUID,
+        status: CommitmentStatus | None = None,
+    ) -> list[CommitmentResponse]:
         """
-        List commitments, optionally filtered by status.
+        List a user's commitments, optionally filtered by status.
 
         Args:
+            user_id: Owner whose commitments to return.
             status: If provided, only return commitments in that status.
-                If None, return all commitments.
 
         Returns:
             List of CommitmentResponse, sorted by created_at descending
@@ -95,18 +110,28 @@ class CommitmentRepository:
         """
         if status is not None:
             rows = self._conn.execute(
-                "SELECT * FROM commitments WHERE status = ? ORDER BY created_at DESC",
-                (status.value,),
+                """
+                SELECT * FROM commitments
+                 WHERE user_id = ? AND status = ?
+                 ORDER BY created_at DESC
+                """,
+                (str(user_id), status.value),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM commitments ORDER BY created_at DESC"
+                """
+                SELECT * FROM commitments
+                 WHERE user_id = ?
+                 ORDER BY created_at DESC
+                """,
+                (str(user_id),),
             ).fetchall()
 
         return [self._row_to_response(row) for row in rows]
 
     def update(
         self,
+        user_id: UUID,
         commitment_id: UUID,
         text: str | None = None,
         due_at: datetime | None = None,
@@ -116,6 +141,7 @@ class CommitmentRepository:
         Partial update of a commitment. Only non-None fields are changed.
 
         Args:
+            user_id: Owner of the commitment.
             commitment_id: The UUID of the commitment to update.
             text: Optional new text.
             due_at: Optional new due timestamp.
@@ -123,13 +149,12 @@ class CommitmentRepository:
 
         Returns:
             The updated CommitmentResponse, or None if no commitment with
-            that id exists.
+            that id exists for this user.
         """
-        existing = self.get(commitment_id)
+        existing = self.get(user_id, commitment_id)
         if existing is None:
             return None
 
-        # Collect only the fields that are actually being changed.
         updates: dict[str, object] = {}
         if text is not None:
             updates["text"] = text
@@ -139,51 +164,50 @@ class CommitmentRepository:
             updates["status"] = status.value
 
         if not updates:
-            # Nothing to change; return existing as-is.
             return existing
 
         updates["updated_at"] = datetime.now(UTC).isoformat()
 
-        # Build SET clause dynamically — only update fields the caller provided.
         set_clause = ", ".join(f"{key} = ?" for key in updates)
-        values = list(updates.values()) + [str(commitment_id)]
+        values = list(updates.values()) + [str(commitment_id), str(user_id)]
 
         self._conn.execute(
-            f"UPDATE commitments SET {set_clause} WHERE id = ?",
+            f"UPDATE commitments SET {set_clause} WHERE id = ? AND user_id = ?",
             values,
         )
         self._conn.commit()
 
-        return self.get(commitment_id)
+        return self.get(user_id, commitment_id)
 
-    def latest_update_time(self) -> datetime | None:
+    def latest_update_time(self, user_id: UUID) -> datetime | None:
         """
-        Return the most recent updated_at timestamp across all commitments,
-        or None if the table is empty.
+        Return the most recent updated_at across this user's commitments.
 
         Used by BriefingService to detect when its cached briefing is stale.
         """
         row = self._conn.execute(
-            "SELECT MAX(updated_at) AS latest FROM commitments"
+            "SELECT MAX(updated_at) AS latest FROM commitments WHERE user_id = ?",
+            (str(user_id),),
         ).fetchone()
         if row is None or row["latest"] is None:
             return None
         return datetime.fromisoformat(row["latest"])
 
-    def delete(self, commitment_id: UUID) -> bool:
+    def delete(self, user_id: UUID, commitment_id: UUID) -> bool:
         """
-        Hard-delete a commitment by id.
+        Hard-delete a commitment by id, scoped to its owner.
 
         Args:
+            user_id: Owner of the commitment.
             commitment_id: The UUID of the commitment to delete.
 
         Returns:
-            True if a row was deleted, False if no commitment with that
-            id existed.
+            True if a row was deleted, False if no such commitment exists
+            for this user.
         """
         cursor = self._conn.execute(
-            "DELETE FROM commitments WHERE id = ?",
-            (str(commitment_id),),
+            "DELETE FROM commitments WHERE id = ? AND user_id = ?",
+            (str(commitment_id), str(user_id)),
         )
         self._conn.commit()
         return cursor.rowcount > 0

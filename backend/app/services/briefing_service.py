@@ -21,6 +21,7 @@ commitment mutation triggers regeneration, or the user hits "refresh"
 
 import logging
 from datetime import UTC, date, datetime
+from uuid import UUID
 
 from app.agents.orchestrator import call_llm
 from app.models.briefing import BriefingResponse
@@ -60,11 +61,12 @@ class BriefingService:
         # with "(none)" in the events section.
         self._calendar = calendar_service
 
-    def get_today(self, force_regenerate: bool = False) -> BriefingResponse:
+    def get_today(self, user_id: UUID, force_regenerate: bool = False) -> BriefingResponse:
         """
-        Get today's briefing — cached if fresh, regenerated otherwise.
+        Get today's briefing for the given user — cached if fresh, regenerated otherwise.
 
         Args:
+            user_id: Owner of the briefing.
             force_regenerate: If True, skip the cache and always regenerate.
                 Used when the user explicitly hits "refresh."
 
@@ -78,35 +80,35 @@ class BriefingService:
         today = date.today()
 
         if not force_regenerate:
-            cached = self._repo.get_for_date(today)
-            if cached is not None and self._is_cache_fresh(cached):
-                logger.info(f"Returning cached briefing for {today}")
+            cached = self._repo.get_for_date(user_id, today)
+            if cached is not None and self._is_cache_fresh(user_id, cached):
+                logger.info("Returning cached briefing for user %s on %s", user_id, today)
                 return cached
 
-        return self._generate_and_save(today)
+        return self._generate_and_save(user_id, today)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _is_cache_fresh(self, cached: BriefingResponse) -> bool:
+    def _is_cache_fresh(self, user_id: UUID, cached: BriefingResponse) -> bool:
         """
         A cached briefing is fresh if it was generated STRICTLY after the
         most recent commitment update. Equal timestamps are treated as
         stale because we can't tell which event happened first at that
         precision — safer to regenerate.
 
-        If there are no commitments at all, the cache is trivially fresh.
+        If the user has no commitments at all, the cache is trivially fresh.
         """
-        latest = self._service.latest_commitment_update()
+        latest = self._service.latest_commitment_update(user_id)
         if latest is None:
             return True
         return cached.generated_at > latest
 
-    def _generate_and_save(self, today: date) -> BriefingResponse:
-        """Generate a fresh briefing and persist it (upsert) for the date."""
-        today_commitments, overdue_commitments = self._bucket_commitments(today)
-        events = self._fetch_events(today)
+    def _generate_and_save(self, user_id: UUID, today: date) -> BriefingResponse:
+        """Generate a fresh briefing and persist it (upsert) for this user+date."""
+        today_commitments, overdue_commitments = self._bucket_commitments(user_id, today)
+        events = self._fetch_events(user_id, today)
 
         user_prompt = USER_TEMPLATE.format(
             today_name=today.strftime("%A"),
@@ -140,17 +142,17 @@ class BriefingService:
         # Persist to cache (upsert). The persisted version comes back marked
         # cached=True, but we return the fresh-flagged version to the caller
         # so the client sees this was a fresh generation.
-        self._repo.save(fresh, today)
+        self._repo.save(user_id, fresh, today)
 
         logger.info(
-            f"Generated briefing for {today}: {len(today_commitments)} today, "
-            f"{len(overdue_commitments)} overdue, {len(raw)} chars"
+            "Generated briefing for user %s on %s: %d today, %d overdue, %d chars",
+            user_id, today, len(today_commitments), len(overdue_commitments), len(raw)
         )
 
         return fresh
 
     def _bucket_commitments(
-        self, today: date
+        self, user_id: UUID, today: date
     ) -> tuple[list[CommitmentResponse], list[CommitmentResponse]]:
         """
         Split open commitments into 'today' and 'overdue' buckets.
@@ -160,7 +162,7 @@ class BriefingService:
         Excluded: commitments without due_at (floating), future due dates,
                   and done/abandoned items.
         """
-        all_open = self._service.list(status=CommitmentStatus.OPEN)
+        all_open = self._service.list(user_id, status=CommitmentStatus.OPEN)
 
         today_bucket: list[CommitmentResponse] = []
         overdue_bucket: list[CommitmentResponse] = []
@@ -190,11 +192,11 @@ class BriefingService:
                 lines.append(f"- {c.text}")
         return "\n".join(lines)
 
-    def _fetch_events(self, today: date) -> list[CalendarEvent]:
-        """Get today's calendar events, or an empty list if none available."""
+    def _fetch_events(self, user_id: UUID, today: date) -> list[CalendarEvent]:
+        """Get today's calendar events for the user, or an empty list if none available."""
         if self._calendar is None:
             return []
-        return self._calendar.list_today(today)
+        return self._calendar.list_today(user_id, today)
 
     @staticmethod
     def _format_events(events: list[CalendarEvent]) -> str:

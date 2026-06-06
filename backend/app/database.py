@@ -1,10 +1,13 @@
 """
 database.py — SQLite connection and schema management.
 
+Schema lives in the migrations/ folder as numbered SQL files. On startup
+init_db() applies any unapplied migrations (see app.migrations).
+
 For slice 1 we use SQLite for simplicity. Switching to Postgres later
-will mean changing this file (and adding migrations) — not changes
-scattered throughout the codebase. That's the value of the layered
-architecture.
+will mean changing this file (and adapting the migration files) — not
+changes scattered throughout the codebase. That's the value of the
+layered architecture.
 
 The database file lives at backend/data/overwatch.db. The parent folder
 is created automatically on first connection. The file itself is
@@ -14,6 +17,8 @@ gitignored.
 import sqlite3
 from collections.abc import Generator
 from pathlib import Path
+
+from app.migrations import run_migrations
 
 # DB lives in backend/data/overwatch.db
 _DB_PATH = Path(__file__).parent.parent / "data" / "overwatch.db"
@@ -33,48 +38,26 @@ def get_connection() -> sqlite3.Connection:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(_DB_PATH)
     conn.row_factory = sqlite3.Row
+    # Enforce foreign keys (off by default in SQLite for legacy reasons)
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
 def init_db() -> None:
     """
-    Create the commitments and briefings tables if they don't exist.
+    Apply all pending schema migrations.
 
-    Idempotent — safe to call on every app startup. Real schema migrations
-    will come later (Alembic) when the schema starts evolving in production.
+    Idempotent — safe to call on every app startup. Migration tracking
+    lives in the schema_migrations table.
+
+    Raises:
+        sqlite3.DatabaseError: If a migration fails. The database stays
+            in its prior state because each migration runs in a
+            transaction.
     """
     conn = get_connection()
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS commitments (
-                id          TEXT PRIMARY KEY,
-                text        TEXT NOT NULL,
-                due_at      TEXT,
-                status      TEXT NOT NULL,
-                created_at  TEXT NOT NULL,
-                updated_at  TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS briefings (
-                id            TEXT PRIMARY KEY,
-                date          TEXT NOT NULL UNIQUE,
-                content       TEXT NOT NULL,
-                today_count   INTEGER NOT NULL,
-                overdue_count INTEGER NOT NULL,
-                generated_at  TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS push_subscriptions (
-                id          TEXT PRIMARY KEY,
-                endpoint    TEXT NOT NULL UNIQUE,
-                p256dh      TEXT NOT NULL,
-                auth        TEXT NOT NULL,
-                created_at  TEXT NOT NULL
-            )
-        """)
-        conn.commit()
+        run_migrations(conn)
     finally:
         conn.close()
 

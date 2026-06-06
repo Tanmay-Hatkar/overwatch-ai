@@ -91,6 +91,39 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
+    # Production hardening
+    # =========================================================================
+    # Comma-separated list of origins allowed to call the API (browser CORS).
+    # In dev, defaults to the Vite server. In prod, set to the Vercel URL.
+    # Multiple origins: "https://overwatch.vercel.app,https://overwatch.dev"
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://localhost:5174",
+        description="Comma-separated origins allowed for CORS",
+    )
+
+    # Comma-separated email allowlist for sign-in. If non-empty, only these
+    # Google accounts can sign up/in. Empty string (default) = open signup.
+    # For a single-user private deploy, set this to your email only.
+    allowed_google_emails: str = Field(
+        default="",
+        description="Comma-separated email allowlist for sign-in (empty = open)",
+    )
+
+    # Absolute path to the SQLite DB file. Defaults to backend/data/overwatch.db
+    # for local dev. In production set to e.g. /data/overwatch.db (Railway
+    # volume mount point) so the DB survives container restarts.
+    database_path: str = Field(
+        default="",
+        description="Absolute path to SQLite DB file (empty = backend/data/overwatch.db)",
+    )
+
+    # Log level: DEBUG | INFO | WARNING | ERROR. Defaults to INFO.
+    log_level: str = Field(
+        default="INFO",
+        description="Python logging level",
+    )
+
+    # =========================================================================
     # Loader config
     # =========================================================================
     # env_file: load from backend/.env (relative to where uvicorn runs)
@@ -105,3 +138,41 @@ class Settings(BaseSettings):
 
 # Singleton instance. Import this everywhere: `from app.config import settings`
 settings = Settings()
+
+
+def cors_origin_list() -> list[str]:
+    """
+    Parse settings.cors_origins (comma-separated) into a clean list.
+
+    Trims whitespace, drops empty entries. Returns the list FastAPI's
+    CORSMiddleware expects in `allow_origins`.
+    """
+    return [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+
+
+def allowed_google_email_list() -> list[str]:
+    """
+    Parse settings.allowed_google_emails (comma-separated, lowercased).
+
+    Empty list means "no allowlist" — anyone with a Google account can sign in.
+    Non-empty list means "only these exact emails can sign in."
+    """
+    return [
+        e.strip().lower()
+        for e in settings.allowed_google_emails.split(",")
+        if e.strip()
+    ]
+
+
+def is_email_allowed(email: str) -> bool:
+    """
+    Check whether the given email is permitted to sign in.
+
+    Returns True when:
+      - The allowlist is empty (open signup), OR
+      - The (lowercased) email matches an entry in the allowlist.
+    """
+    allowlist = allowed_google_email_list()
+    if not allowlist:
+        return True
+    return email.lower() in allowlist

@@ -18,10 +18,18 @@ import sqlite3
 from collections.abc import Generator
 from pathlib import Path
 
+from app.config import settings
 from app.migrations import run_migrations
 
-# DB lives in backend/data/overwatch.db
-_DB_PATH = Path(__file__).parent.parent / "data" / "overwatch.db"
+# Default location: backend/data/overwatch.db (relative to this file).
+# Production override via settings.database_path env var (e.g. Railway
+# volume at /data/overwatch.db) so the DB survives container restarts.
+_DEFAULT_DB_PATH = Path(__file__).parent.parent / "data" / "overwatch.db"
+
+
+def _resolve_db_path() -> Path:
+    """Return settings.database_path if set, otherwise the default dev path."""
+    return Path(settings.database_path) if settings.database_path else _DEFAULT_DB_PATH
 
 
 def get_connection() -> sqlite3.Connection:
@@ -35,8 +43,9 @@ def get_connection() -> sqlite3.Connection:
         An open sqlite3.Connection with row_factory set to sqlite3.Row
         (so rows behave like dicts: row["column_name"]).
     """
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH)
+    db_path = _resolve_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     # Enforce foreign keys (off by default in SQLite for legacy reasons)
     conn.execute("PRAGMA foreign_keys = ON")

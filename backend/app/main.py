@@ -5,19 +5,46 @@ Run with:
     uvicorn app.main:app --reload
 
 The --reload flag auto-restarts the server on file changes (dev only).
+
+Production responsibilities (besides routing):
+  - Configure logging (level + format) at startup
+  - Mount CORS middleware so the Vercel-hosted frontend can call this API
+    when they sit on different origins
+  - Start the ReminderScheduler in the FastAPI lifespan
 """
 
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import cors_origin_list, settings
 from app.database import init_db
 from app.routes import auth, briefings, calendar, chat, commitments, push, stats
 from app.routes.push import get_push_service
 from app.services.reminder_scheduler import ReminderScheduler
 
+
+def _configure_logging() -> None:
+    """
+    Set the root logger level and format from settings.
+
+    In production (settings.environment == "production"), uses a single-line
+    format that plays nicely with log aggregators (Railway's log viewer,
+    Datadog, etc.). In dev, prefers the readable multi-field format.
+    """
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    if settings.environment == "production":
+        fmt = "%(asctime)s %(levelname)s %(name)s %(message)s"
+    else:
+        fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    logging.basicConfig(level=level, format=fmt, stream=sys.stdout, force=True)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 # Module-level scheduler holder — lifespan populates it on startup,
@@ -31,12 +58,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     Lifespan context — startup before yield, shutdown after.
 
     Responsibilities:
-      1. Initialize the SQLite schema (idempotent).
+      1. Initialize the SQLite schema (idempotent — runs all migrations).
       2. Start the ReminderScheduler background task, which polls
          commitments and fires push notifications when items become due.
     """
     global _scheduler
 
+    logger.info(
+        "Starting Overwatch backend (environment=%s, db=%s)",
+        settings.environment,
+        settings.database_path or "<default>",
+    )
     init_db()
 
     push_service = get_push_service()
@@ -60,6 +92,19 @@ app = FastAPI(
     description="A conversational AI that captures the commitments you make to yourself.",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# CORS — the frontend (Vercel) calls the backend (Railway) from a different
+# origin in production, so the browser enforces preflight checks. We allow
+# only the origins listed in CORS_ORIGINS (comma-separated env var). Cookies
+# carry the session, so allow_credentials must be True; that means we can't
+# use the "*" wildcard for origins.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origin_list(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Commitments — CRUD + natural language parsing
@@ -92,7 +137,7 @@ def health() -> dict[str, str]:
     """
     Health check endpoint.
 
-    Returns:
-        A dict with status='ok' if the server is running.
+    Used by Railway's healthcheck pings + by you in a browser to confirm
+    the backend is reachable. Returns 200 + {"status":"ok"} when alive.
     """
     return {"status": "ok"}

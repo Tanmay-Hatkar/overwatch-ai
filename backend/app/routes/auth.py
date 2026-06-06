@@ -23,7 +23,7 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse, Response
 
-from app.config import settings
+from app.config import is_email_allowed, settings
 from app.database import get_db
 from app.models.user import UserResponse
 from app.repositories.user_repository import UserRepository
@@ -113,6 +113,13 @@ def google_callback(
     except google_oauth_service.OAuthError:
         logger.exception("Failed to exchange Google OAuth code")
         return _redirect_to_frontend(error="oauth_exchange_failed")
+
+    # Email allowlist: if ALLOWED_GOOGLE_EMAILS is set, only those addresses
+    # may sign in. Reject before touching the DB so unauthorized signups
+    # never create a user row.
+    if not is_email_allowed(google_user.email):
+        logger.info("Sign-in rejected by allowlist: %s", google_user.email)
+        return _redirect_to_frontend(error="email_not_allowed")
 
     # Find or create the user row. google_id is the immutable identifier.
     user = repo.get_by_google_id(google_user.sub)

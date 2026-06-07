@@ -208,7 +208,7 @@ def logout(response: Response) -> None:
         path="/",
         secure=_secure_cookies(),
         httponly=True,
-        samesite="lax",
+        samesite=_cookie_samesite(),
     )
 
 
@@ -267,6 +267,21 @@ def _secure_cookies() -> bool:
     return settings.environment == "production"
 
 
+def _cookie_samesite() -> str:
+    """
+    Return the SameSite policy for our cookies.
+
+    In production the frontend and backend live on different sites
+    (e.g. *.vercel.app and *.up.railway.app), so cross-site requests
+    from the SPA need SameSite=None to carry the session cookie. That
+    combination requires Secure=True, which we already set in prod.
+
+    In development everything is on localhost (same site at the
+    eTLD+1 level) so SameSite=Lax is the safer, CSRF-resistant default.
+    """
+    return "none" if settings.environment == "production" else "lax"
+
+
 def _set_session_cookie(response: Response, token: str) -> None:
     """Apply the standard session cookie attributes."""
     response.set_cookie(
@@ -275,7 +290,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
         max_age=settings.session_max_age_days * 24 * 60 * 60,
         httponly=True,
         secure=_secure_cookies(),
-        samesite="lax",
+        samesite=_cookie_samesite(),
         path="/",
     )
 
@@ -288,7 +303,7 @@ def _set_state_cookie(response: Response, state: str) -> None:
         max_age=_STATE_COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         secure=_secure_cookies(),
-        samesite="lax",
+        samesite=_cookie_samesite(),
         path="/",
     )
 
@@ -300,7 +315,7 @@ def _clear_state_cookie(response: Response) -> None:
         path="/",
         secure=_secure_cookies(),
         httponly=True,
-        samesite="lax",
+        samesite=_cookie_samesite(),
     )
 
 

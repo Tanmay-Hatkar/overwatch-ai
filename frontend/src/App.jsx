@@ -2,14 +2,13 @@ import { useState, useEffect, useCallback } from 'react'
 import { Toaster } from 'sonner'
 import BriefingCard from './components/BriefingCard'
 import ChatBar from './components/ChatBar'
-import CommitmentForm from './components/CommitmentForm'
 import CommitmentList from './components/CommitmentList'
 import LoginScreen from './components/LoginScreen'
-import NotificationStatus from './components/NotificationStatus'
 import PushSetup from './components/PushSetup'
 import SettingsPanel from './components/SettingsPanel'
-import StatsBar from './components/StatsBar'
-import WeeklyCalendar from './components/WeeklyCalendar'
+// CommitmentForm, NotificationStatus, StatsBar, WeeklyCalendar are intentionally
+// not rendered right now — see the comment on <main>. Their components still
+// live in src/components/ for when we bring them back.
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useReminders } from './hooks/useReminders'
 import { listCommitments } from './api'
@@ -102,8 +101,8 @@ function Overwatch() {
       {/* Width: full on mobile, 70% of viewport on desktop, capped at 1280px so
           it doesn't sprawl on ultrawide monitors. Bottom padding leaves room
           for the fixed ChatBar so nothing is hidden behind it. */}
-      <div className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-12 pb-40">
-        <header className="mb-10 flex items-start justify-between">
+      <div className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-8 pb-40">
+        <header className="mb-6 flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-orange-500 mb-1 tracking-tight">
               Overwatch
@@ -123,19 +122,13 @@ function Overwatch() {
           </div>
         </header>
 
-        <main>
+        {/* Main view simplified to: briefing → commitment list → push toggle.
+            The chat bar at the bottom is the primary way to add commitments,
+            so the structured form, mock weekly calendar, and floating stats
+            bar are hidden. Their components remain imported so we can bring
+            them back per-feature later (e.g. real calendar in slice 12). */}
+        <main className="space-y-6">
           <BriefingCard refreshTrigger={commitmentsVersion} />
-
-          <WeeklyCalendar
-            commitments={commitments}
-            refreshTrigger={commitmentsVersion}
-          />
-
-          <StatsBar refreshTrigger={commitmentsVersion} />
-
-          <NotificationStatus />
-          <PushSetup />
-          <CommitmentForm onCreated={refresh} />
 
           {loading ? (
             <p className="text-zinc-600 italic text-sm">Loading…</p>
@@ -144,6 +137,8 @@ function Overwatch() {
           ) : (
             <CommitmentList commitments={commitments} onChange={refresh} />
           )}
+
+          <PushSetup />
         </main>
       </div>
 

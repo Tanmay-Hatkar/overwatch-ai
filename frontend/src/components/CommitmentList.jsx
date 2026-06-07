@@ -81,7 +81,7 @@ export default function CommitmentList({ commitments, onChange }) {
 
   const emptyMessage =
     filter === 'all'
-      ? 'No open commitments. Add one above.'
+      ? "Nothing yet. Tell Overwatch what you said you'd do ↓"
       : filter === 'due_today'
         ? 'Nothing due today.'
         : 'Nothing overdue.'

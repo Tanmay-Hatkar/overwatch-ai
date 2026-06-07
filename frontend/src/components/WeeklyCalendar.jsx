@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getWeekEvents } from '../api'
+import { getWeekEvents, getCalendarConnection, googleCalendarConnectUrl } from '../api'
 
 /**
  * WeeklyCalendar — full-width hero showing the current Mon-Sun week.
@@ -75,6 +75,9 @@ function getMarkerStyle(due_at) {
 export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
+  // null = unknown (still checking), true/false once known. Drives whether
+  // the "Connect Google Calendar" CTA shows in the header.
+  const [connected, setConnected] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -88,6 +91,20 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [refreshTrigger])
+
+  useEffect(() => {
+    let cancelled = false
+    getCalendarConnection()
+      .then((data) => {
+        if (!cancelled) setConnected(Boolean(data?.connected))
+      })
+      .catch(() => {
+        if (!cancelled) setConnected(false)
       })
     return () => {
       cancelled = true
@@ -135,12 +152,23 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
   return (
     <section className="mb-8">
       <div className="bg-[#141414] border border-white/[0.05] rounded-2xl p-5">
-        {/* Section label */}
+        {/* Section label + (when not linked) a Connect Google Calendar CTA */}
         <div className="flex items-center gap-3 mb-4">
           <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-zinc-600">
             This Week
           </span>
           <div className="flex-1 h-px bg-white/[0.04]" />
+          {connected === false && (
+            <a
+              href={googleCalendarConnectUrl()}
+              className="group shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#1a1a1a] border border-[#2a2a2a] hover:border-orange-500/50 hover:bg-orange-500/[0.06] transition-colors"
+            >
+              <GoogleGlyph />
+              <span className="text-[11px] font-medium text-zinc-300 group-hover:text-orange-200">
+                Connect Google Calendar
+              </span>
+            </a>
+          )}
         </div>
 
         {loading ? (
@@ -314,6 +342,30 @@ function CommitmentMarker({ commitment }) {
         {formatTime(commitment.due_at)}
       </p>
     </div>
+  )
+}
+
+/** Small Google "G" glyph for the connect button. */
+function GoogleGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38z"
+      />
+    </svg>
   )
 }
 

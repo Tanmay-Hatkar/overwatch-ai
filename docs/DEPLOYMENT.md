@@ -179,6 +179,21 @@ This is **the most common deploy bug.** The OAuth callback URL must EXACTLY matc
 
 Keep the existing `http://localhost:8000/auth/google/callback` entry too so local dev still works.
 
+### 5b. Add the Google Calendar connect redirect URI
+
+The "Connect Google Calendar" feature (ADR-0011) uses a SECOND redirect
+URI on the same OAuth client. Add both of these as Authorized redirect URIs:
+
+```
+https://<your-railway-url>/calendar/connect/google/callback
+http://localhost:8000/calendar/connect/google/callback
+```
+
+Without these, clicking "Connect Google Calendar" returns Google's
+`redirect_uri_mismatch` error. The calendar scope (`calendar.readonly`)
+is requested incrementally — no separate client or consent-screen config
+is needed for a project in testing mode with you as a test user.
+
 ---
 
 ## 6. Smoke test

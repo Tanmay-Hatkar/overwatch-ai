@@ -106,6 +106,26 @@ export async function getWeekEvents() {
   return apiFetch('/calendar/week')
 }
 
+/** Whether the signed-in user has linked their Google Calendar. */
+export async function getCalendarConnection() {
+  return apiFetch('/calendar/connection')
+}
+
+/** Disconnect the user's Google Calendar (deletes stored tokens). */
+export async function disconnectCalendar() {
+  return apiFetch('/calendar/disconnect', { method: 'POST' })
+}
+
+/**
+ * Full URL that kicks off the Google Calendar OAuth flow. This is a
+ * top-level navigation (window.location), NOT a fetch — Google redirects
+ * the browser through its consent screen and back to the backend callback,
+ * which then redirects to the frontend with ?calendar=connected.
+ */
+export function googleCalendarConnectUrl() {
+  return `${API_BASE}/calendar/connect/google`
+}
+
 // ---------------------------------------------------------------------------
 // Web Push subscriptions
 // ---------------------------------------------------------------------------

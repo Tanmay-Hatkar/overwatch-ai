@@ -15,6 +15,7 @@ Scope: calendar.readonly. We never write to the user's calendar.
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -64,13 +65,81 @@ class GoogleCalendarProvider(CalendarProvider):
         credentials_file: str = "credentials.json",
         token_file: str = "token.json",
         calendar_id: str = "primary",
+        *,
+        credentials: Credentials | None = None,
+        on_refresh: Callable[[Credentials], None] | None = None,
     ) -> None:
+        """
+        Two construction modes:
+
+          - File-backed (default): reads credentials from token_file on
+            disk. Used in local development with scripts/setup_google_oauth.py.
+          - Credentials-backed: pass a pre-built `credentials` object (e.g.
+            reconstructed from a database row). `on_refresh` is invoked with
+            the refreshed Credentials so the caller can persist the new
+            access token. This is how the hosted, per-user flow works.
+
+        Args:
+            credentials_file: Path to the OAuth client secrets (file mode).
+            token_file: Path to the stored token JSON (file mode).
+            calendar_id: Which calendar to read; "primary" by default.
+            credentials: Pre-built credentials (DB mode). Takes precedence.
+            on_refresh: Callback(creds) invoked after a token refresh (DB mode).
+        """
         self._credentials_path = Path(credentials_file)
         self._token_path = Path(token_file)
         self._calendar_id = calendar_id
+        self._creds = credentials
+        self._on_refresh = on_refresh
+
+    @classmethod
+    def from_token_row(
+        cls,
+        row: dict,
+        on_refresh: Callable[[Credentials], None] | None = None,
+        calendar_id: str = "primary",
+    ) -> "GoogleCalendarProvider":
+        """
+        Build a provider from a stored google_calendar_tokens row.
+
+        Args:
+            row: A dict from GoogleCalendarTokensRepository.get() with
+                access_token, refresh_token, token_uri, client_id,
+                client_secret, scopes, expiry.
+            on_refresh: Callback invoked with refreshed Credentials so the
+                caller can persist the new access token to the DB.
+            calendar_id: Which calendar to read.
+
+        Returns:
+            A credentials-backed GoogleCalendarProvider.
+        """
+        expiry = None
+        if row.get("expiry"):
+            try:
+                parsed = datetime.fromisoformat(row["expiry"])
+                # google-auth expects a NAIVE UTC datetime for expiry.
+                expiry = parsed.astimezone(UTC).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                logger.warning("calendar: bad stored expiry %r", row.get("expiry"))
+
+        creds = Credentials(
+            token=row["access_token"],
+            refresh_token=row.get("refresh_token"),
+            token_uri=row.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id=row["client_id"],
+            client_secret=row["client_secret"],
+            scopes=(row.get("scopes") or "").split() or None,
+        )
+        creds.expiry = expiry
+        return cls(credentials=creds, on_refresh=on_refresh, calendar_id=calendar_id)
 
     def is_configured(self) -> bool:
-        """Both credentials.json and token.json must exist."""
+        """
+        Configured if we have credentials directly (DB mode) OR both
+        credentials.json and token.json exist on disk (file mode).
+        """
+        if self._creds is not None:
+            return True
         return self._credentials_path.exists() and self._token_path.exists()
 
     def list_events_for_date(self, target_date: date) -> list[CalendarEvent]:
@@ -132,19 +201,29 @@ class GoogleCalendarProvider(CalendarProvider):
         """
         Load credentials, refresh if needed, build the Calendar API client.
 
-        Side effect: writes the refreshed token back to disk so the next
-        invocation skips the refresh.
+        Side effect on refresh:
+          - DB mode: invoke on_refresh(creds) so the caller persists the
+            new access token to google_calendar_tokens.
+          - File mode: write the refreshed token back to disk.
         """
-        creds = Credentials.from_authorized_user_file(
-            str(self._token_path), SCOPES
-        )
+        if self._creds is not None:
+            creds = self._creds
+        else:
+            creds = Credentials.from_authorized_user_file(
+                str(self._token_path), SCOPES
+            )
 
         # Refresh expired credentials. If there's no refresh token, this
         # raises and we fall through to the empty-list path upstream.
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            # Persist the refreshed token so next call doesn't hit refresh.
-            self._token_path.write_text(creds.to_json())
+            if self._creds is not None:
+                # DB mode — hand the refreshed creds back for persistence.
+                if self._on_refresh is not None:
+                    self._on_refresh(creds)
+            else:
+                # File mode — persist so next call skips the refresh.
+                self._token_path.write_text(creds.to_json())
 
         return build("calendar", "v3", credentials=creds, cache_discovery=False)
 

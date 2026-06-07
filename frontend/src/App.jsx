@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Toaster } from 'sonner'
+import { Toaster, toast } from 'sonner'
 import BriefingCard from './components/BriefingCard'
 import ChatBar from './components/ChatBar'
 import CommitmentList from './components/CommitmentList'
@@ -98,6 +98,32 @@ function Overwatch() {
 
   useEffect(() => {
     refresh()
+  }, [refresh])
+
+  // After the Google Calendar OAuth flow, the backend redirects back here
+  // with ?calendar=<status>. Surface it as a toast, refresh so the calendar
+  // picks up the new connection + events, then strip the param from the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const calendarStatus = params.get('calendar')
+    if (!calendarStatus) return
+
+    const messages = {
+      connected: ['success', 'Google Calendar connected.'],
+      denied: ['error', 'Calendar access was declined.'],
+      state_mismatch: ['error', 'Calendar connection expired — try again.'],
+      exchange_failed: ['error', "Couldn't connect calendar. Try again."],
+      missing_code: ['error', "Couldn't connect calendar. Try again."],
+    }
+    const [kind, text] = messages[calendarStatus] || ['message', 'Calendar updated.']
+    toast[kind] ? toast[kind](text) : toast(text)
+
+    if (calendarStatus === 'connected') refresh()
+
+    // Remove the query param so a reload doesn't re-toast.
+    params.delete('calendar')
+    const clean = window.location.pathname + (params.toString() ? `?${params}` : '')
+    window.history.replaceState({}, '', clean)
   }, [refresh])
 
   useReminders(commitments)

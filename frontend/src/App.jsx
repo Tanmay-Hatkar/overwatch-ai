@@ -6,8 +6,9 @@ import CommitmentList from './components/CommitmentList'
 import LoginScreen from './components/LoginScreen'
 import PushSetup from './components/PushSetup'
 import SettingsPanel from './components/SettingsPanel'
-// CommitmentForm, NotificationStatus, StatsBar, WeeklyCalendar are intentionally
-// not rendered right now — see the comment on <main>. Their components still
+import WeeklyCalendar from './components/WeeklyCalendar'
+// CommitmentForm, NotificationStatus, StatsBar are intentionally not
+// rendered right now — see the comment on <main>. Their components still
 // live in src/components/ for when we bring them back.
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useReminders } from './hooks/useReminders'
@@ -122,13 +123,18 @@ function Overwatch() {
           </div>
         </header>
 
-        {/* Main view simplified to: briefing → commitment list → push toggle.
+        {/* Main view: briefing → weekly calendar → commitments → push toggle.
             The chat bar at the bottom is the primary way to add commitments,
-            so the structured form, mock weekly calendar, and floating stats
-            bar are hidden. Their components remain imported so we can bring
-            them back per-feature later (e.g. real calendar in slice 12). */}
+            so the structured form and floating stats bar are hidden. The
+            calendar shows an empty week in production until per-user Google
+            Calendar OAuth ships (avoiding the old mock-data look). */}
         <main className="space-y-6">
           <BriefingCard refreshTrigger={commitmentsVersion} />
+
+          <WeeklyCalendar
+            commitments={commitments}
+            refreshTrigger={commitmentsVersion}
+          />
 
           {loading ? (
             <p className="text-zinc-600 italic text-sm">Loading…</p>

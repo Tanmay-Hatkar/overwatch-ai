@@ -16,8 +16,10 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 
+from app.config import settings
 from app.models.event import CalendarEvent
 from app.providers.calendar_provider import CalendarProvider
+from app.providers.empty_calendar_provider import EmptyCalendarProvider
 from app.providers.google_calendar_provider import GoogleCalendarProvider
 from app.providers.mock_calendar_provider import MockCalendarProvider
 from app.services.calendar_service import CalendarService
@@ -40,11 +42,28 @@ router = APIRouter(prefix="/calendar", tags=["calendar"])
 
 
 def _select_provider() -> CalendarProvider:
-    """Pick the best available provider at import time."""
+    """
+    Pick the best available provider at import time.
+
+    Priority:
+      1. Real Google Calendar — used whenever a token.json is present.
+      2. In production (ENVIRONMENT=production) with no Google token,
+         use EmptyCalendarProvider so the deployed app shows an honest
+         empty grid instead of MockCalendarProvider's hardcoded fake
+         events. Per-user calendar OAuth lands in a follow-up slice.
+      3. In development with no Google token, use MockCalendarProvider
+         so local dev has visible data to design against.
+    """
     google = GoogleCalendarProvider()
     if google.is_configured():
         logger.info("Calendar: using GoogleCalendarProvider (real account)")
         return google
+    if settings.environment == "production":
+        logger.info(
+            "Calendar: using EmptyCalendarProvider (no token configured; "
+            "production mode hides mock data until per-user OAuth ships)"
+        )
+        return EmptyCalendarProvider()
     logger.info(
         "Calendar: using MockCalendarProvider (no token.json found — run "
         "scripts/setup_google_oauth.py to connect a real account)"

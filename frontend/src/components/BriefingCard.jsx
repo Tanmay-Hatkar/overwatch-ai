@@ -59,11 +59,19 @@ export default function BriefingCard({ refreshTrigger }) {
         {loading && !briefing && <BriefingSkeleton />}
 
         {error && !loading && (
-          <p className="text-red-500 text-sm">
-            {error.includes('503')
-              ? "Couldn't generate a briefing right now."
-              : `Error: ${error}`}
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-zinc-400">
+              {error.includes('Failed to fetch')
+                ? "Can't reach Overwatch right now — check your connection."
+                : "Couldn't put together your briefing just now."}
+            </p>
+            <button
+              onClick={() => load(true)}
+              className="shrink-0 text-[10px] uppercase tracking-widest text-orange-500 hover:text-orange-400 transition-colors"
+            >
+              try again
+            </button>
+          </div>
         )}
 
         {briefing && !error && (

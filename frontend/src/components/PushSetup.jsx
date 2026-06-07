@@ -121,9 +121,35 @@ export default function PushSetup() {
     <button
       onClick={handleEnable}
       disabled={busy}
-      className="mb-3 text-[11px] text-zinc-500 hover:text-orange-500 transition-colors disabled:opacity-50"
+      className="group inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] hover:border-orange-500/50 hover:bg-orange-500/[0.06] transition-colors disabled:opacity-50"
     >
-      {busy ? 'Enabling…' : 'Enable push reminders (fires even when tab closed) →'}
+      <BellIcon />
+      <span className="text-[12px] font-medium text-zinc-300 group-hover:text-orange-200">
+        {busy ? 'Enabling…' : 'Enable push reminders'}
+      </span>
+      <span className="text-[10px] text-zinc-600 group-hover:text-orange-300/60">
+        fires even when closed
+      </span>
     </button>
+  )
+}
+
+/** Small bell icon for the push button. */
+function BellIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="text-orange-500"
+    >
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </svg>
   )
 }

@@ -109,7 +109,7 @@ function Overwatch() {
           dynamically from the measured ChatBar height (plus a small buffer)
           so content behind the chat is always reachable on any viewport. */}
       <div
-        className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-8"
+        className="ow-fade-in w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-8"
         style={{ paddingBottom: `${chatBarHeight + 32}px` }}
       >
         <header className="mb-6 flex items-start justify-between">

@@ -10,3 +10,26 @@
 #root {
   min-height: 100vh;
 }
+
+/* Gentle entrance for the main view so the app feels alive on load
+   rather than snapping in. Respects reduced-motion preferences. */
+@keyframes ow-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ow-fade-in {
+  animation: ow-fade-in 0.35s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ow-fade-in {
+    animation: none;
+  }
+}

@@ -38,12 +38,16 @@ function saveHistory(turns) {
  *
  * History persists across reloads via localStorage. Cleared by the "clear" link.
  */
-export default function ChatBar({ onAction }) {
+export default function ChatBar({ onAction, onHeightChange }) {
   const [history, setHistory] = useState(loadHistory)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const messagesEndRef = useRef(null)
+  // Measured by ResizeObserver so the parent can reserve enough
+  // padding-bottom to never hide content behind us — especially when
+  // the history panel expands on a phone.
+  const containerRef = useRef(null)
 
   // Persist history whenever it changes
   useEffect(() => {
@@ -56,6 +60,22 @@ export default function ChatBar({ onAction }) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }
   }, [history, collapsed])
+
+  // Watch our container's real height and notify the parent.
+  // ResizeObserver fires on history expand/collapse, input growth, viewport
+  // change, font load — covers every case where we'd otherwise overlap.
+  useEffect(() => {
+    if (!containerRef.current || !onHeightChange) return
+    const el = containerRef.current
+    const observer = new ResizeObserver(([entry]) => {
+      onHeightChange(entry.contentRect.height)
+    })
+    observer.observe(el)
+    // Report initial height immediately so the first paint already has
+    // the right padding even before any user interaction.
+    onHeightChange(el.getBoundingClientRect().height)
+    return () => observer.disconnect()
+  }, [onHeightChange])
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -100,7 +120,7 @@ export default function ChatBar({ onAction }) {
       {/* Gradient fade above the bar so content underneath isn't abruptly cut */}
       <div className="h-12 bg-gradient-to-t from-[#0f0f0f] to-transparent" />
 
-      <div className="bg-[#0f0f0f] border-t border-white/[0.06] pointer-events-auto">
+      <div ref={containerRef} className="bg-[#0f0f0f] border-t border-white/[0.06] pointer-events-auto">
         <div className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-3">
           {/* Message history — collapsed by default if empty */}
           {history.length > 0 && !collapsed && (

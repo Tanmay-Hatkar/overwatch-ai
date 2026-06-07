@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Toaster } from 'sonner'
 import BriefingCard from './components/BriefingCard'
 import ChatBar from './components/ChatBar'
@@ -77,6 +77,11 @@ function Overwatch() {
   const [error, setError] = useState(null)
   const [commitmentsVersion, setCommitmentsVersion] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // ChatBar is position: fixed, so it doesn't push content. To stop it from
+  // overlapping the bottom of the page (especially on phones when the
+  // history panel expands), we measure its real height and pad the main
+  // container by that amount. ChatBar reports its height via onHeightChange.
+  const [chatBarHeight, setChatBarHeight] = useState(96)
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -100,9 +105,13 @@ function Overwatch() {
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-[#f5f5f5]">
       {/* Width: full on mobile, 70% of viewport on desktop, capped at 1280px so
-          it doesn't sprawl on ultrawide monitors. Bottom padding leaves room
-          for the fixed ChatBar so nothing is hidden behind it. */}
-      <div className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-8 pb-40">
+          it doesn't sprawl on ultrawide monitors. paddingBottom is set
+          dynamically from the measured ChatBar height (plus a small buffer)
+          so content behind the chat is always reachable on any viewport. */}
+      <div
+        className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-8"
+        style={{ paddingBottom: `${chatBarHeight + 32}px` }}
+      >
         <header className="mb-6 flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-orange-500 mb-1 tracking-tight">
@@ -152,8 +161,10 @@ function Overwatch() {
 
       {/* ChatBar — fixed at the bottom, talks to /chat. Triggers a refresh
           whenever an add_commitment intent succeeds so the list/calendar/
-          briefing pick up the new commitment without a manual reload. */}
-      <ChatBar onAction={refresh} />
+          briefing pick up the new commitment without a manual reload.
+          Reports its current rendered height so the main container can
+          pad the bottom enough to avoid being covered. */}
+      <ChatBar onAction={refresh} onHeightChange={setChatBarHeight} />
 
       {/* Toast notifications — themed to match our dark + orange aesthetic. */}
       <Toaster

@@ -284,18 +284,36 @@ function CommitmentMarker({ commitment }) {
   const past = isPast(commitment.due_at)
   const overdue = !isDone && past
 
+  // Visible block (not a 4px line) so users can see at a glance that their
+  // commitment landed on the calendar. Colored by state:
+  //   - done     → muted zinc
+  //   - overdue  → red
+  //   - open     → orange (matches the rest of the brand)
+  const stateClass = isDone
+    ? 'bg-zinc-800/60 border border-zinc-700 text-zinc-500 line-through'
+    : overdue
+      ? 'bg-red-500/15 border border-red-500/50 text-red-200'
+      : 'bg-orange-500/15 border border-orange-500/40 text-orange-200 hover:bg-orange-500/25'
+
   return (
     <div
       title={`${commitment.text}\n${formatTime(commitment.due_at)}`}
-      className={`absolute left-0.5 right-0.5 h-1 rounded-full ${
-        isDone
-          ? 'bg-zinc-700'
-          : overdue
-            ? 'bg-red-500'
-            : 'bg-emerald-500'
-      } shadow-[0_0_4px_currentColor]`}
-      style={getMarkerStyle(commitment.due_at)}
-    />
+      className={`absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 overflow-hidden cursor-default select-none transition-colors ${stateClass}`}
+      style={{
+        ...getMarkerStyle(commitment.due_at),
+        // 30-min wide visual block so it's actually visible. Adjust height
+        // to match an event block's minimum so commitments sit alongside
+        // events without being lost in the grid.
+        height: '28px',
+      }}
+    >
+      <p className="text-[10px] font-medium leading-tight truncate">
+        {commitment.text}
+      </p>
+      <p className="text-[9px] opacity-60 leading-tight">
+        {formatTime(commitment.due_at)}
+      </p>
+    </div>
   )
 }
 

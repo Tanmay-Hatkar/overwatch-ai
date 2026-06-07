@@ -87,7 +87,8 @@ SYSTEM_PROMPT = (
 
 
 USER_TEMPLATE = (
-    "Today is {today_name}, {today_date}.\n"
+    "Right now it is {now_time} on {today_name}, {today_date} (the user's local time).\n"
+    "Use this for relative times: 'in 30 minutes', 'tonight at 7', 'in an hour'.\n"
     "\n"
     "Date lookup (copy exact dates from this table — do NOT calculate):\n"
     "{date_table}\n"

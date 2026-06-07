@@ -47,6 +47,16 @@ class ChatRequest(BaseModel):
             "Cap to ~10-20 turns; longer histories increase token costs."
         ),
     )
+    timezone: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "The user's IANA timezone name (e.g. 'America/Toronto'), sent by "
+            "the browser. Used so the assistant computes 'today', 'tonight', "
+            "and relative times against the user's local clock — not the "
+            "server's. When absent or invalid, the server falls back to UTC."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):

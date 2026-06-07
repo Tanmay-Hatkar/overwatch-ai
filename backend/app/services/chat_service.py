@@ -20,7 +20,8 @@ message.
 
 import json
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.agents.orchestrator import call_llm
 from app.config import settings
@@ -60,7 +61,9 @@ class ChatService:
 
     def handle(self, request: ChatRequest) -> ChatResponse:
         """Process one chat message end-to-end."""
-        user_prompt = self._build_user_prompt(request)
+        user_tz = self._resolve_timezone(request.timezone)
+        now_local = datetime.now(user_tz)
+        user_prompt = self._build_user_prompt(request, now_local)
 
         raw = call_llm(
             system_prompt=SYSTEM_PROMPT,
@@ -75,7 +78,7 @@ class ChatService:
 
         commitment: CommitmentResponse | None = None
         if result.intent == "add_commitment":
-            commitment = self._create_commitment(result)
+            commitment = self._create_commitment(result, user_tz)
 
         return ChatResponse(
             reply=result.reply,
@@ -87,8 +90,28 @@ class ChatService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_user_prompt(self, request: ChatRequest) -> str:
-        today = datetime.now()
+    @staticmethod
+    def _resolve_timezone(tz_name: str | None) -> ZoneInfo:
+        """
+        Turn the browser-supplied IANA timezone name into a ZoneInfo.
+
+        Falls back to UTC if the name is missing or unrecognized — the
+        server's clock is reliable (NTP); the only thing we don't know
+        without the client is which wall clock to render it against.
+        """
+        if tz_name:
+            try:
+                return ZoneInfo(tz_name)
+            except (ZoneInfoNotFoundError, ValueError):
+                logger.warning("chat: unknown timezone %r, defaulting to UTC", tz_name)
+        return ZoneInfo("UTC")
+
+    def _build_user_prompt(self, request: ChatRequest, now_local: datetime) -> str:
+        """
+        Build the user prompt. `now_local` is the current moment rendered in
+        the user's timezone, so 'today', 'tonight', and the date table are all
+        anchored to the user's wall clock rather than the server's.
+        """
         day_names = [
             "Monday", "Tuesday", "Wednesday", "Thursday",
             "Friday", "Saturday", "Sunday",
@@ -97,14 +120,18 @@ class ChatService:
         # 14-day lookup, same as the standalone parser (ADR 0003)
         lookup_lines = []
         for i in range(14):
-            d = today + timedelta(days=i)
+            d = now_local + timedelta(days=i)
             marker = " (today)" if i == 0 else " (tomorrow)" if i == 1 else ""
             lookup_lines.append(f"  {d.date().isoformat()} — {day_names[d.weekday()]}{marker}")
         date_table = "\n".join(lookup_lines)
 
+        # Current local clock time, e.g. "4:42 PM" — lets the LLM resolve
+        # "in 30 minutes", "tonight at 7", "in an hour" correctly.
+        now_time = now_local.strftime("%I:%M %p").lstrip("0")
+
         # Pull current state for query intent
         open_items = self._service.list(status=CommitmentStatus.OPEN)
-        today_date = date.today()
+        today_date = now_local.date()
 
         today_open = [c for c in open_items if c.due_at and c.due_at.date() == today_date]
         overdue = [c for c in open_items if c.due_at and c.due_at.date() < today_date]
@@ -136,8 +163,9 @@ class ChatService:
             conversation = "  (no prior turns)"
 
         return USER_TEMPLATE.format(
-            today_name=day_names[today.weekday()],
-            today_date=today.date().isoformat(),
+            now_time=now_time,
+            today_name=day_names[now_local.weekday()],
+            today_date=now_local.date().isoformat(),
             date_table=date_table,
             open_count=len(today_open),
             open_list=open_list,
@@ -181,9 +209,16 @@ class ChatService:
             raise ChatError(f"LLM output missing required fields: {e}") from e
 
     def _create_commitment(
-        self, result: _ChatIntentResult
+        self, result: _ChatIntentResult, user_tz: ZoneInfo
     ) -> CommitmentResponse | None:
-        """For add_commitment intents, persist the extracted commitment."""
+        """
+        For add_commitment intents, persist the extracted commitment.
+
+        The LLM emits due_at as a naive wall-clock time (no offset), meaning
+        "11am" in the USER'S timezone. We attach the user's timezone, then
+        convert to UTC for storage so reminders fire at the right absolute
+        instant and every device renders it in its own local time.
+        """
         text = (result.text or "").strip()
         if not text:
             # LLM classified as add_commitment but didn't give us a usable title.
@@ -194,11 +229,11 @@ class ChatService:
         due_at: datetime | None = None
         if result.due_at:
             try:
-                due_at = datetime.fromisoformat(result.due_at)
-                # Treat naive ISO as local time (matches frontend's behavior in the
-                # standard parser) — keep tz-aware in UTC for storage.
-                if due_at.tzinfo is None:
-                    due_at = due_at.replace(tzinfo=UTC)
+                parsed = datetime.fromisoformat(result.due_at)
+                if parsed.tzinfo is None:
+                    # Naive => interpret as the user's wall clock, then to UTC.
+                    parsed = parsed.replace(tzinfo=user_tz)
+                due_at = parsed.astimezone(UTC)
             except (ValueError, TypeError):
                 logger.warning(f"chat: invalid due_at dropped: {result.due_at!r}")
 

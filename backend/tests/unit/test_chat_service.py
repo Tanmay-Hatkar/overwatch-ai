@@ -101,6 +101,60 @@ def test_add_commitment_drops_invalid_due_at(chat_service: ChatService) -> None:
 
 
 # ---------------------------------------------------------------------------
+# timezone handling
+# ---------------------------------------------------------------------------
+
+
+def test_naive_due_at_interpreted_in_user_timezone(chat_service: ChatService) -> None:
+    """
+    A naive due_at like '11:00' with a Toronto timezone (UTC-4 in June) is
+    stored as 15:00 UTC — so reminders fire at the right absolute instant.
+    """
+    fake = _llm_response(
+        "add_commitment",
+        text="Vosyn meeting",
+        due_at="2026-06-08T11:00:00",
+        reply="Got it.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(
+            ChatRequest(message="meeting at 11am Monday", timezone="America/Toronto")
+        )
+
+    assert result.commitment is not None
+    assert result.commitment.due_at is not None
+    # 11:00 America/Toronto (EDT, UTC-4) == 15:00 UTC
+    assert result.commitment.due_at.astimezone(UTC).hour == 15
+
+
+def test_missing_timezone_falls_back_to_utc(chat_service: ChatService) -> None:
+    """No timezone supplied → naive due_at is treated as UTC (no shift)."""
+    fake = _llm_response(
+        "add_commitment",
+        text="Test",
+        due_at="2026-06-08T11:00:00",
+        reply="Added.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(ChatRequest(message="x"))
+
+    assert result.commitment is not None
+    assert result.commitment.due_at is not None
+    assert result.commitment.due_at.astimezone(UTC).hour == 11
+
+
+def test_invalid_timezone_falls_back_gracefully(chat_service: ChatService) -> None:
+    """A garbage timezone name doesn't crash — falls back to UTC."""
+    fake = _llm_response("general", reply="Hey.")
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(
+            ChatRequest(message="hi", timezone="Not/AReal_Zone")
+        )
+
+    assert result.intent == "general"  # handled without error
+
+
+# ---------------------------------------------------------------------------
 # query intent
 # ---------------------------------------------------------------------------
 

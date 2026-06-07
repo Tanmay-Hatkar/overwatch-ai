@@ -137,9 +137,19 @@ export async function sendTestPush() {
 // ---------------------------------------------------------------------------
 
 export async function sendChat(message, history = []) {
+  // Send the browser's IANA timezone (e.g. "America/Toronto") so the
+  // assistant resolves "today", "tonight", and relative times against the
+  // user's local clock rather than the server's. Guarded in case a very old
+  // browser lacks Intl support.
+  let timezone
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    timezone = undefined
+  }
   return apiFetch('/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, timezone }),
   })
 }
 

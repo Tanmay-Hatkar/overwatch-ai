@@ -15,6 +15,7 @@ dependencies = [
     "google-auth-oauthlib>=1.0",
     "pywebpush>=2.0",
     "pyjwt>=2.9",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

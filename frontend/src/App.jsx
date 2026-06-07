@@ -99,8 +99,10 @@ function Overwatch() {
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-[#f5f5f5]">
-      {/* Bottom padding leaves room for the fixed ChatBar so nothing is hidden */}
-      <div className="max-w-2xl mx-auto px-6 py-12 pb-40">
+      {/* Width: full on mobile, 70% of viewport on desktop, capped at 1280px so
+          it doesn't sprawl on ultrawide monitors. Bottom padding leaves room
+          for the fixed ChatBar so nothing is hidden behind it. */}
+      <div className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-12 pb-40">
         <header className="mb-10 flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-orange-500 mb-1 tracking-tight">

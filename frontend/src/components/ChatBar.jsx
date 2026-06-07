@@ -101,7 +101,7 @@ export default function ChatBar({ onAction }) {
       <div className="h-12 bg-gradient-to-t from-[#0f0f0f] to-transparent" />
 
       <div className="bg-[#0f0f0f] border-t border-white/[0.06] pointer-events-auto">
-        <div className="max-w-2xl mx-auto px-6 py-3">
+        <div className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-3">
           {/* Message history — collapsed by default if empty */}
           {history.length > 0 && !collapsed && (
             <div className="max-h-48 overflow-y-auto mb-3 space-y-2 pr-1">

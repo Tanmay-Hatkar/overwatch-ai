@@ -152,24 +152,38 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
   return (
     <section className="mb-8">
       <div className="bg-[#141414] border border-white/[0.05] rounded-2xl p-5">
-        {/* Section label + (when not linked) a Connect Google Calendar CTA */}
+        {/* Section label */}
         <div className="flex items-center gap-3 mb-4">
           <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-zinc-600">
             This Week
           </span>
           <div className="flex-1 h-px bg-white/[0.04]" />
-          {connected === false && (
-            <a
-              href={googleCalendarConnectUrl()}
-              className="group shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#1a1a1a] border border-[#2a2a2a] hover:border-orange-500/50 hover:bg-orange-500/[0.06] transition-colors"
-            >
+        </div>
+
+        {/* Prominent Connect CTA — only when the user hasn't linked Google yet.
+            Full-width banner so it's impossible to miss (the old tiny header
+            link was easy to overlook, especially on phones). */}
+        {connected === false && (
+          <a
+            href={googleCalendarConnectUrl()}
+            className="group flex items-center gap-3 mb-4 px-4 py-3 rounded-xl bg-orange-500/[0.06] border border-orange-500/25 hover:bg-orange-500/[0.12] hover:border-orange-500/50 transition-colors"
+          >
+            <span className="shrink-0 w-9 h-9 rounded-lg bg-[#1a1a1a] border border-white/10 flex items-center justify-center">
               <GoogleGlyph />
-              <span className="text-[11px] font-medium text-zinc-300 group-hover:text-orange-200">
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-semibold text-orange-200">
                 Connect Google Calendar
               </span>
-            </a>
-          )}
-        </div>
+              <span className="block text-[11px] text-zinc-500">
+                See your real events on the grid below
+              </span>
+            </span>
+            <span className="shrink-0 text-orange-400 group-hover:translate-x-0.5 transition-transform text-lg">
+              →
+            </span>
+          </a>
+        )}
 
         {loading ? (
           <CalendarSkeleton />

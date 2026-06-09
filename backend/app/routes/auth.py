@@ -20,7 +20,7 @@ import logging
 import sqlite3
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, status
 from fastapi.responses import RedirectResponse, Response
 
 from app.config import is_email_allowed, settings
@@ -44,16 +44,50 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _STATE_COOKIE = "ow_oauth_state"
 _STATE_COOKIE_MAX_AGE_SECONDS = 600  # 10 minutes
 
+# Short-lived cookie marking an OAuth flow as originating from the native
+# (Capacitor) app, so the callback returns the session token via a deep
+# link instead of setting a cookie. Set in /login, read in /callback.
+_NATIVE_COOKIE = "ow_oauth_native"
+
+# Custom URL scheme the Android app registers (AndroidManifest.xml). The
+# callback deep-links here with the session token so the app can store it.
+_NATIVE_REDIRECT_SCHEME = "overwatch"
+
 
 def _build_repo(conn: sqlite3.Connection = Depends(get_db)) -> UserRepository:
     """FastAPI dependency that wires a UserRepository to the request's DB connection."""
     return UserRepository(conn)
 
 
+def _token_from(session_cookie: str | None, authorization: str | None) -> str | None:
+    """
+    Extract the session token from either source.
+
+    Web clients send it as the `ow_session` cookie. The native app sends it
+    as `Authorization: Bearer <token>` (no cookies in the native webview).
+    The Authorization header takes precedence when present.
+
+    Args:
+        session_cookie: Value of the ow_session cookie, if any.
+        authorization: Value of the Authorization header, if any.
+
+    Returns:
+        The bearer/cookie token string, or None if neither is present.
+    """
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip() or None
+    return session_cookie
+
+
 @router.get("/google/login")
-def google_login() -> RedirectResponse:
+def google_login(native: bool = False) -> RedirectResponse:
     """
     Start the OAuth flow. Sets a short-lived state cookie and 302s to Google.
+
+    Args:
+        native: When true (the Capacitor app passes ?native=1), the flow is
+            marked so the callback returns the token via a deep link instead
+            of setting a session cookie.
 
     Returns:
         302 redirect to Google's consent screen.
@@ -72,6 +106,17 @@ def google_login() -> RedirectResponse:
 
     response = RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
     _set_state_cookie(response, state)
+    if native:
+        # Mark this flow as native so the callback deep-links the token back.
+        response.set_cookie(
+            key=_NATIVE_COOKIE,
+            value="1",
+            max_age=_STATE_COOKIE_MAX_AGE_SECONDS,
+            httponly=True,
+            secure=_secure_cookies(),
+            samesite="lax",
+            path="/",
+        )
     return response
 
 
@@ -96,30 +141,32 @@ def google_callback(
         302 redirect to the frontend (with the session cookie set on success,
         or with a query string error parameter on failure).
     """
+    native = request.cookies.get(_NATIVE_COOKIE) == "1"
+
     if error:
         logger.info("Google OAuth callback returned error: %s", error)
-        return _redirect_to_frontend(error="google_denied")
+        return _finish_auth(error="google_denied", native=native)
 
     if not code or not state:
-        return _redirect_to_frontend(error="missing_code_or_state")
+        return _finish_auth(error="missing_code_or_state", native=native)
 
     expected_state = request.cookies.get(_STATE_COOKIE)
     if not expected_state or expected_state != state:
         logger.warning("OAuth state mismatch — possible CSRF or expired flow")
-        return _redirect_to_frontend(error="state_mismatch")
+        return _finish_auth(error="state_mismatch", native=native)
 
     try:
         google_user = google_oauth_service.exchange_code_for_user(code)
     except google_oauth_service.OAuthError:
         logger.exception("Failed to exchange Google OAuth code")
-        return _redirect_to_frontend(error="oauth_exchange_failed")
+        return _finish_auth(error="oauth_exchange_failed", native=native)
 
     # Email allowlist: if ALLOWED_GOOGLE_EMAILS is set, only those addresses
     # may sign in. Reject before touching the DB so unauthorized signups
     # never create a user row.
     if not is_email_allowed(google_user.email):
         logger.info("Sign-in rejected by allowlist: %s", google_user.email)
-        return _redirect_to_frontend(error="email_not_allowed")
+        return _finish_auth(error="email_not_allowed", native=native)
 
     # Find or create the user row. google_id is the immutable identifier.
     user = repo.get_by_google_id(google_user.sub)
@@ -139,40 +186,38 @@ def google_callback(
     repo.update_last_login(user.id)
 
     token = issue_session_token(user.id)
-    response = _redirect_to_frontend()
-    _clear_state_cookie(response)
-    _set_session_cookie(response, token)
-    return response
+    return _finish_auth(token=token, native=native)
 
 
 @router.get("/me", response_model=UserResponse)
 def get_current_user_endpoint(
     response: Response,
     session: Annotated[str | None, Cookie(alias="ow_session")] = None,
+    authorization: Annotated[str | None, Header()] = None,
     repo: UserRepository = Depends(_build_repo),
 ) -> UserResponse:
     """
     Return the current signed-in user, or 401.
 
-    Side effect: if the cookie's JWT is within the refresh window
-    (settings.session_refresh_within_days of expiry), this endpoint
-    silently re-issues a fresh cookie. The user never sees a forced
-    logout as long as they keep using the app.
+    Accepts the session token from either the ow_session cookie (web) or an
+    Authorization: Bearer header (native app).
 
-    Args:
-        session: The JWT from the ow_session cookie.
+    Side effect (web only): if the cookie's JWT is within the refresh window,
+    this endpoint silently re-issues a fresh cookie. The native app handles
+    its own token lifetime, so no cookie is set for bearer callers.
 
     Returns:
         UserResponse on success.
 
     Raises:
-        401 if the cookie is missing, expired, or invalid.
+        401 if the token is missing, expired, or invalid.
     """
-    if not session:
+    token = _token_from(session, authorization)
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
 
     try:
-        user_id = verify_session_token(session)
+        user_id = verify_session_token(token)
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -181,7 +226,7 @@ def get_current_user_endpoint(
 
     user = repo.get_by_id(user_id)
     if user is None:
-        # User row was deleted but their cookie is still floating around.
+        # User row was deleted but their token is still floating around.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User no longer exists",
@@ -189,7 +234,9 @@ def get_current_user_endpoint(
 
     repo.update_last_login(user.id)
 
-    if should_refresh(session):
+    # Cookie refresh only applies to web (cookie) callers; bearer callers
+    # (native) carry the token themselves and re-auth via /auth/google/login.
+    if session and not authorization and should_refresh(session):
         new_token = issue_session_token(user.id)
         _set_session_cookie(response, new_token)
         logger.debug("Refreshed session cookie for user %s", user.id)
@@ -219,29 +266,32 @@ def logout(response: Response) -> None:
 
 def current_user(
     session: Annotated[str | None, Cookie(alias="ow_session")] = None,
+    authorization: Annotated[str | None, Header()] = None,
     repo: UserRepository = Depends(_build_repo),
 ) -> UserResponse:
     """
     FastAPI dependency that materializes the signed-in user, or 401s.
+
+    Accepts the session token from either the ow_session cookie (web) or an
+    Authorization: Bearer header (native app). This is the single auth
+    chokepoint every protected route depends on.
 
     Use in routes:
         @router.get("/commitments")
         def list_commitments(user: UserResponse = Depends(current_user)):
             ...
 
-    Args:
-        session: The JWT from the ow_session cookie (auto-injected by FastAPI).
-
     Returns:
         UserResponse for the signed-in user.
 
     Raises:
-        401 if the session is missing, invalid, or the user no longer exists.
+        401 if the token is missing, invalid, or the user no longer exists.
     """
-    if not session:
+    token = _token_from(session, authorization)
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
     try:
-        user_id = verify_session_token(session)
+        user_id = verify_session_token(token)
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -332,3 +382,56 @@ def _redirect_to_frontend(error: str | None = None) -> RedirectResponse:
     base = settings.frontend_url.rstrip("/")
     url = f"{base}/?auth_error={error}" if error else f"{base}/"
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+def _redirect_to_native(token: str | None = None, error: str | None = None) -> RedirectResponse:
+    """
+    Build the post-callback deep-link redirect into the native app.
+
+    On success: overwatch://auth?token=<jwt> — the app captures the token
+    from its appUrlOpen listener and stores it in secure storage.
+
+    On failure: overwatch://auth?auth_error=<code>.
+    """
+    if token:
+        url = f"{_NATIVE_REDIRECT_SCHEME}://auth?token={token}"
+    else:
+        url = f"{_NATIVE_REDIRECT_SCHEME}://auth?auth_error={error or 'sign_in_failed'}"
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+def _finish_auth(
+    token: str | None = None,
+    error: str | None = None,
+    native: bool = False,
+) -> RedirectResponse:
+    """
+    Finalize the OAuth callback: route the result to web or native.
+
+    Web: redirect to the frontend, setting the session cookie on success.
+    Native: deep-link the token (or error) into the app; no cookie is set.
+
+    In both cases the short-lived OAuth state + native marker cookies are
+    cleared.
+
+    Args:
+        token: The freshly-issued session JWT on success.
+        error: An error code on failure (mutually exclusive with token).
+        native: Whether the flow originated from the native app.
+    """
+    if native:
+        response = _redirect_to_native(token=token, error=error)
+    else:
+        response = _redirect_to_frontend(error=error)
+        if token:
+            _set_session_cookie(response, token)
+
+    _clear_state_cookie(response)
+    response.delete_cookie(
+        key=_NATIVE_COOKIE,
+        path="/",
+        secure=_secure_cookies(),
+        httponly=True,
+        samesite="lax",
+    )
+    return response

@@ -68,7 +68,19 @@ export function AuthProvider({ children }) {
     setUser(null)
   }, [])
 
-  const value = { user, loading, error, login: startGoogleLogin, logout, refresh }
+  const login = useCallback(async () => {
+    setError(null)
+    try {
+      // Web: navigates away (never resolves). Native: resolves after the
+      // system-browser OAuth deep-links the token back, then we load the user.
+      await startGoogleLogin()
+      await refresh()
+    } catch (err) {
+      setError(mapAuthError(err.message))
+    }
+  }, [refresh])
+
+  const value = { user, loading, error, login, logout, refresh }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

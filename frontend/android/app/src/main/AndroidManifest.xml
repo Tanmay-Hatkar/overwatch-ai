@@ -22,6 +22,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Deep link for the OAuth callback: overwatch://auth?token=...
+                 The system browser redirects here after Google sign-in so
+                 the app can capture the session token (see lib/native.js). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="overwatch" android:host="auth" />
+            </intent-filter>
+
         </activity>
 
         <provider

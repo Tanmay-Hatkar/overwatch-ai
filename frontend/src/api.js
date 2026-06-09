@@ -13,19 +13,35 @@
  * with each call.
  */
 
+import { isNative, getStoredToken, setStoredToken, clearStoredToken, nativeGoogleLogin } from './lib/native'
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
+/** Export the base so the native login flow can build the login URL. */
+export function apiBase() {
+  return API_BASE
+}
+
 /**
- * Wrapped fetch with credentials and a stable base URL prefix.
- * All callers should go through this rather than raw fetch() so that
- * cookie behavior + base URL stay consistent.
+ * Wrapped fetch with a stable base URL prefix.
+ *
+ * Web: relies on the session cookie (credentials: 'include').
+ * Native: there are no cookies in the webview, so we attach the stored
+ * session token as `Authorization: Bearer <token>`.
  */
 async function apiFetch(path, options = {}) {
+  const authHeader = {}
+  if (isNative()) {
+    const token = await getStoredToken()
+    if (token) authHeader.Authorization = `Bearer ${token}`
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     ...options,
     headers: {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...authHeader,
       ...(options.headers || {}),
     },
   })
@@ -190,12 +206,30 @@ export async function getCurrentUser() {
   }
 }
 
-/** Navigate the whole window to Google's OAuth consent screen. */
-export function startGoogleLogin() {
+/**
+ * Start sign-in.
+ *
+ * Web: navigate the window to Google's OAuth consent screen (cookie flow).
+ * Native: open the system browser, capture the deep-linked token, store it.
+ * Returns a promise on native (resolves after token capture); on web it
+ * navigates away and never resolves.
+ */
+export async function startGoogleLogin() {
+  if (isNative()) {
+    await nativeGoogleLogin(API_BASE)
+    return
+  }
   window.location.href = `${API_BASE}/auth/google/login`
 }
 
-/** Clear the session cookie on the server. */
+/** Clear the session — server cookie (web) and/or stored token (native). */
 export async function logout() {
-  return apiFetch('/auth/logout', { method: 'POST' })
+  try {
+    await apiFetch('/auth/logout', { method: 'POST' })
+  } finally {
+    if (isNative()) await clearStoredToken()
+  }
 }
+
+// Re-export so callers (AuthContext) can manage native token state directly.
+export { isNative, getStoredToken, setStoredToken, clearStoredToken }

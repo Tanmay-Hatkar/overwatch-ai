@@ -1,0 +1,5 @@
+package com.tanmayhatkar.overwatch;
+
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {}

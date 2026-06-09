@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import { getWeekEvents, getCalendarConnection, googleCalendarConnectUrl } from '../api'
+import { toast } from 'sonner'
+import {
+  getWeekEvents,
+  getCalendarConnection,
+  googleCalendarConnectUrl,
+  disconnectCalendar,
+} from '../api'
 
 /**
  * WeeklyCalendar — full-width hero showing the current Mon-Sun week.
@@ -111,6 +117,17 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
     }
   }, [refreshTrigger])
 
+  async function handleDisconnect() {
+    try {
+      await disconnectCalendar()
+      setConnected(false)
+      setEvents([])
+      toast.success('Google Calendar disconnected.')
+    } catch (err) {
+      toast.error(err.message || "Couldn't disconnect calendar.")
+    }
+  }
+
   const todayStr = new Date().toLocaleDateString('en-CA')
 
   // Build Mon-Sun for the current week.
@@ -152,12 +169,29 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
   return (
     <section className="mb-8">
       <div className="bg-[#141414] border border-white/[0.05] rounded-2xl p-5">
-        {/* Section label */}
+        {/* Section label + (when linked) a small "Connected" status chip */}
         <div className="flex items-center gap-3 mb-4">
           <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-zinc-600">
             This Week
           </span>
           <div className="flex-1 h-px bg-white/[0.04]" />
+          {connected === true && (
+            <div className="group relative shrink-0 inline-flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-500/[0.08] border border-emerald-500/25">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span className="text-[10px] font-medium uppercase tracking-wider text-emerald-300">
+                  Calendar Connected
+                </span>
+              </span>
+              <button
+                onClick={handleDisconnect}
+                className="text-[10px] uppercase tracking-wider text-zinc-600 hover:text-red-400 transition-colors"
+                title="Disconnect Google Calendar"
+              >
+                Disconnect
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Prominent Connect CTA — only when the user hasn't linked Google yet.

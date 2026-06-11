@@ -45,8 +45,20 @@ def get_connection() -> sqlite3.Connection:
     """
     db_path = _resolve_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    # timeout: if the database is locked, wait up to 15s for it to free up
+    # before raising — the Python-driver-level companion to PRAGMA busy_timeout.
+    conn = sqlite3.connect(db_path, timeout=15.0)
     conn.row_factory = sqlite3.Row
+
+    # Concurrency hardening. The frontend fires ~6 requests in parallel on
+    # page load, and the reminder scheduler polls in the background — all
+    # against one SQLite file. Without these, colliding connections fail
+    # instantly with "database is locked", causing intermittent load errors
+    # that clear on refresh. With them, reads and a writer run concurrently
+    # and any lock is waited out rather than failing.
+    conn.execute("PRAGMA journal_mode = WAL")   # readers + 1 writer, no mutual block
+    conn.execute("PRAGMA busy_timeout = 15000")  # wait up to 15s for a lock
+    conn.execute("PRAGMA synchronous = NORMAL")  # safe + faster under WAL
     # Enforce foreign keys (off by default in SQLite for legacy reasons)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

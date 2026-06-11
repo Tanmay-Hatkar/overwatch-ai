@@ -189,6 +189,16 @@ export async function sendChat(message, history = []) {
   })
 }
 
+/** Load the signed-in user's recent conversation turns (oldest-first). */
+export async function getChatHistory(limit = 50) {
+  return apiFetch(`/chat/history?limit=${limit}`)
+}
+
+/** Delete all of the signed-in user's conversation history. */
+export async function clearChatHistory() {
+  return apiFetch('/chat/history', { method: 'DELETE' })
+}
+
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------

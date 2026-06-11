@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { sendChat } from '../api'
+import { sendChat, getChatHistory, clearChatHistory } from '../api'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { speak, cancelSpeech, isSpeechSynthesisSupported } from '../lib/speech'
 
@@ -39,7 +39,9 @@ function saveHistory(turns) {
  *   - If a commitment was created, the parent's onAction callback fires
  *     so the list/calendar/briefing refresh
  *
- * History persists across reloads via localStorage. Cleared by the "clear" link.
+ * History is server-backed: on mount we load the signed-in user's turns from
+ * the backend (so it follows them across devices), with localStorage as an
+ * offline cache for instant first paint. "clear" deletes it server-side.
  */
 export default function ChatBar({ onAction, onHeightChange }) {
   const [history, setHistory] = useState(loadHistory)
@@ -84,7 +86,27 @@ export default function ChatBar({ onAction, onHeightChange }) {
     if (!speakReplies) cancelSpeech()
   }, [speakReplies])
 
-  // Persist history whenever it changes
+  // On mount, load the authoritative history from the server (cross-device).
+  // localStorage already seeded the initial state for an instant first paint;
+  // the server response replaces it. Failures (offline / not signed in) leave
+  // the cached copy in place.
+  useEffect(() => {
+    let cancelled = false
+    getChatHistory()
+      .then((turns) => {
+        if (!cancelled && Array.isArray(turns)) {
+          setHistory(turns.slice(-MAX_HISTORY_TURNS))
+        }
+      })
+      .catch(() => {
+        // keep the localStorage cache
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Persist history to the localStorage cache whenever it changes
   useEffect(() => {
     saveHistory(history)
   }, [history])
@@ -158,9 +180,14 @@ export default function ChatBar({ onAction, onHeightChange }) {
     }
   }
 
-  function handleClear() {
+  async function handleClear() {
     setHistory([])
     saveHistory([])
+    try {
+      await clearChatHistory() // delete server-side too, not just locally
+    } catch {
+      // best-effort; local is already cleared
+    }
   }
 
   return (

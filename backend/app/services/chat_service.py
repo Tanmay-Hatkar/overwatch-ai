@@ -29,10 +29,12 @@ from app.config import settings
 from app.models.chat import (
     ChatRequest,
     ChatResponse,
+    ChatTurn,
     _ChatIntentResult,
 )
 from app.models.commitment import CommitmentCreate, CommitmentResponse, CommitmentStatus
 from app.prompts.chat import SYSTEM_PROMPT, USER_TEMPLATE
+from app.repositories.conversation_repository import ConversationRepository
 from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
 
@@ -55,15 +57,28 @@ class ChatService:
         self,
         commitment_service: CommitmentService,
         calendar_service: CalendarService | None = None,
+        conversation_repo: ConversationRepository | None = None,
     ) -> None:
         self._service = commitment_service
         self._calendar = calendar_service
+        # When present, conversation history is loaded from + persisted to the
+        # database (server-side, cross-device) instead of relying solely on the
+        # client-supplied history. Optional so existing tests/callers still work.
+        self._conversation = conversation_repo
 
     def handle(self, user_id: UUID, request: ChatRequest) -> ChatResponse:
         """Process one chat message end-to-end, scoped to user_id."""
         user_tz = self._resolve_timezone(request.timezone)
         now_local = datetime.now(user_tz)
-        user_prompt = self._build_user_prompt(user_id, request, now_local)
+
+        # Prefer server-persisted history (follows the user across devices);
+        # fall back to the client-supplied history when no repo is wired.
+        if self._conversation is not None:
+            history = self._conversation.recent(user_id, limit=10)
+        else:
+            history = request.history[-10:]
+
+        user_prompt = self._build_user_prompt(user_id, request, now_local, history)
 
         raw = call_llm(
             system_prompt=SYSTEM_PROMPT,
@@ -79,6 +94,11 @@ class ChatService:
         commitment: CommitmentResponse | None = None
         if result.intent == "add_commitment":
             commitment = self._create_commitment(user_id, result, user_tz)
+
+        # Persist this exchange so it's part of future context.
+        if self._conversation is not None:
+            self._conversation.append(user_id, "user", request.message)
+            self._conversation.append(user_id, "assistant", result.reply)
 
         return ChatResponse(
             reply=result.reply,
@@ -107,12 +127,18 @@ class ChatService:
         return ZoneInfo("UTC")
 
     def _build_user_prompt(
-        self, user_id: UUID, request: ChatRequest, now_local: datetime
+        self,
+        user_id: UUID,
+        request: ChatRequest,
+        now_local: datetime,
+        history: list[ChatTurn],
     ) -> str:
         """
         Build the user prompt. `now_local` is the current moment rendered in
         the user's timezone, so 'today', 'tonight', and the date table are all
-        anchored to the user's wall clock rather than the server's.
+        anchored to the user's wall clock rather than the server's. `history`
+        is the recent conversation (DB-backed when available, else client-sent),
+        oldest-first.
         """
         day_names = [
             "Monday", "Tuesday", "Wednesday", "Thursday",
@@ -155,9 +181,9 @@ class ChatService:
                 events_list = "\n".join(lines)
 
         # Recent conversation — format each turn as "User: ..." / "Assistant: ..."
-        if request.history:
+        if history:
             convo_lines = []
-            for turn in request.history[-10:]:  # cap at last 10 turns
+            for turn in history[-10:]:  # cap at last 10 turns
                 speaker = "User" if turn.role == "user" else "Assistant"
                 convo_lines.append(f"  {speaker}: {turn.content}")
             conversation = "\n".join(convo_lines)

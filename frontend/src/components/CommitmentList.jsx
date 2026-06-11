@@ -48,6 +48,18 @@ export default function CommitmentList({ commitments, onChange }) {
     }
   }
 
+  async function handleReschedule(commitment, isoDueAt) {
+    // isoDueAt is a full UTC ISO string (or already-converted). Sending it
+    // reschedules the commitment; the backend stores UTC, the UI renders local.
+    try {
+      await updateCommitment(commitment.id, { due_at: isoDueAt })
+      toast.success(`Rescheduled: ${commitment.text}`)
+      onChange()
+    } catch (err) {
+      toast.error(err.message || "Couldn't reschedule.")
+    }
+  }
+
   const open = commitments.filter((c) => c.status === 'open')
   const done = commitments.filter((c) => c.status === 'done')
 
@@ -117,6 +129,7 @@ export default function CommitmentList({ commitments, onChange }) {
                 onToggle={() => handleToggleDone(c)}
                 onDelete={() => handleDelete(c)}
                 onEdit={(newText) => handleEdit(c, newText)}
+                onReschedule={(iso) => handleReschedule(c, iso)}
               />
             ))}
           </ul>
@@ -169,11 +182,21 @@ function FilterButton({ active, onClick, count, children }) {
  * saves (so clicking elsewhere doesn't lose your changes). Empty text on
  * save reverts to original.
  */
-function CommitmentItem({ commitment, onToggle, onDelete, onEdit }) {
+function CommitmentItem({ commitment, onToggle, onDelete, onEdit, onReschedule }) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(commitment.text)
+  const [editingTime, setEditingTime] = useState(false)
   const isDone = commitment.status === 'done'
   const dueInfo = formatDueAt(commitment.due_at, isDone)
+
+  function handleTimeChange(localValue) {
+    setEditingTime(false)
+    if (!localValue) return
+    // datetime-local gives a wall-clock string with no zone; interpret it in
+    // the browser's timezone and convert to a UTC ISO string for storage.
+    const iso = new Date(localValue).toISOString()
+    if (onReschedule) onReschedule(iso)
+  }
 
   async function commitEdit() {
     const trimmed = editText.trim()
@@ -244,14 +267,37 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit }) {
             {commitment.text}
           </p>
         )}
-        {dueInfo && (
+        {/* Due time row — click to reschedule. Open commitments only.
+            Shows a datetime-local picker inline; if there's no due time yet,
+            offers a "+ set time" affordance. */}
+        {editingTime ? (
+          <input
+            type="datetime-local"
+            defaultValue={commitment.due_at ? toLocalInputValue(commitment.due_at) : ''}
+            onChange={(e) => handleTimeChange(e.target.value)}
+            onBlur={() => setEditingTime(false)}
+            autoFocus
+            className="mt-1 bg-[#222] border border-orange-500/60 rounded px-1.5 py-0.5 text-[11px] text-zinc-200 focus:outline-none [color-scheme:dark]"
+          />
+        ) : dueInfo ? (
           <p
-            className={`text-[11px] mt-0.5 ${
+            onClick={() => !isDone && setEditingTime(true)}
+            className={`text-[11px] mt-0.5 ${isDone ? '' : 'cursor-pointer hover:text-orange-400'} ${
               dueInfo.overdue && !isDone ? 'text-red-400' : 'text-zinc-500'
             }`}
+            title={isDone ? '' : 'Click to reschedule'}
           >
             {dueInfo.label}
           </p>
+        ) : (
+          !isDone && (
+            <button
+              onClick={() => setEditingTime(true)}
+              className="mt-0.5 text-[11px] text-zinc-600 hover:text-orange-400 transition-colors"
+            >
+              + set time
+            </button>
+          )
         )}
       </div>
       <button
@@ -263,6 +309,16 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit }) {
       </button>
     </li>
   )
+}
+
+/**
+ * Convert a stored UTC ISO datetime into the value a <input type="datetime-local">
+ * expects: a local-timezone "YYYY-MM-DDTHH:mm" string (no zone suffix).
+ */
+function toLocalInputValue(iso) {
+  const d = new Date(iso)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 /**

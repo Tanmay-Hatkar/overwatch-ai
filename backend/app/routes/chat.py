@@ -17,7 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.database import get_db
 from app.models.chat import ChatRequest, ChatResponse
+from app.models.user import UserResponse
 from app.repositories.commitment_repository import CommitmentRepository
+from app.routes.auth import current_user
 from app.routes.calendar import get_calendar_service
 from app.services.calendar_service import CalendarService
 from app.services.chat_service import ChatError, ChatService
@@ -39,11 +41,12 @@ def _build_chat_service(
 @router.post("", response_model=ChatResponse)
 def chat(
     payload: ChatRequest,
+    user: UserResponse = Depends(current_user),
     service: ChatService = Depends(_build_chat_service),
 ) -> ChatResponse:
     """Handle one conversational message and return the assistant's reply."""
     try:
-        return service.handle(payload)
+        return service.handle(user.id, payload)
     except ChatError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

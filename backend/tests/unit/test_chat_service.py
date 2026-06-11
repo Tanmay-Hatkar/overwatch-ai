@@ -7,6 +7,7 @@ robustness, error paths, and that add_commitment actually creates a row.
 """
 
 import json
+from uuid import uuid4
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import patch
 
@@ -20,6 +21,8 @@ from app.services.chat_service import ChatError, ChatService
 from app.services.commitment_service import CommitmentService
 
 LLM_PATCH = "app.services.chat_service.call_llm"
+
+UID = uuid4()
 
 
 @pytest.fixture
@@ -49,7 +52,7 @@ def test_add_commitment_creates_record_and_returns_it(chat_service: ChatService)
         reply="Got it — calling mom Thursday at 3pm.",
     )
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="call mom tomorrow at 3pm"))
+        result = chat_service.handle(UID, ChatRequest(message="call mom tomorrow at 3pm"))
 
     assert result.intent == "add_commitment"
     assert result.commitment is not None
@@ -68,7 +71,7 @@ def test_add_commitment_with_null_due_at(chat_service: ChatService) -> None:
         reply="OK, clean your room — added.",
     )
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="add a task to clean my room"))
+        result = chat_service.handle(UID, ChatRequest(message="add a task to clean my room"))
 
     assert result.commitment is not None
     assert result.commitment.due_at is None
@@ -78,7 +81,7 @@ def test_add_commitment_skips_create_when_text_missing(chat_service: ChatService
     """LLM classifies as add_commitment but provides no text → don't create, just reply."""
     fake = _llm_response("add_commitment", text=None, reply="Sure — what should I add?")
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="add a task"))
+        result = chat_service.handle(UID, ChatRequest(message="add a task"))
 
     assert result.intent == "add_commitment"
     assert result.commitment is None  # nothing persisted
@@ -94,7 +97,7 @@ def test_add_commitment_drops_invalid_due_at(chat_service: ChatService) -> None:
         reply="Added.",
     )
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="test"))
+        result = chat_service.handle(UID, ChatRequest(message="test"))
 
     assert result.commitment is not None
     assert result.commitment.due_at is None  # invalid date dropped
@@ -118,7 +121,7 @@ def test_naive_due_at_interpreted_in_user_timezone(chat_service: ChatService) ->
     )
     with patch(LLM_PATCH, return_value=fake):
         result = chat_service.handle(
-            ChatRequest(message="meeting at 11am Monday", timezone="America/Toronto")
+            UID, ChatRequest(message="meeting at 11am Monday", timezone="America/Toronto")
         )
 
     assert result.commitment is not None
@@ -136,7 +139,7 @@ def test_missing_timezone_falls_back_to_utc(chat_service: ChatService) -> None:
         reply="Added.",
     )
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="x"))
+        result = chat_service.handle(UID, ChatRequest(message="x"))
 
     assert result.commitment is not None
     assert result.commitment.due_at is not None
@@ -148,7 +151,7 @@ def test_invalid_timezone_falls_back_gracefully(chat_service: ChatService) -> No
     fake = _llm_response("general", reply="Hey.")
     with patch(LLM_PATCH, return_value=fake):
         result = chat_service.handle(
-            ChatRequest(message="hi", timezone="Not/AReal_Zone")
+            UID, ChatRequest(message="hi", timezone="Not/AReal_Zone")
         )
 
     assert result.intent == "general"  # handled without error
@@ -166,7 +169,7 @@ def test_query_intent_does_not_create_anything(chat_service: ChatService) -> Non
         reply="You have nothing on your plate today.",
     )
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="what do I have today?"))
+        result = chat_service.handle(UID, ChatRequest(message="what do I have today?"))
 
     assert result.intent == "query"
     assert result.commitment is None
@@ -181,12 +184,12 @@ def test_query_intent_prompt_includes_current_state(
 
     today_noon = datetime.combine(date.today(), datetime.min.time().replace(hour=12), tzinfo=UTC)
     yesterday = datetime.now(UTC) - timedelta(days=1)
-    service.create(CommitmentCreate(text="Lunch with Alex", due_at=today_noon))
-    service.create(CommitmentCreate(text="Update docs", due_at=yesterday))
+    service.create(UID, CommitmentCreate(text="Lunch with Alex", due_at=today_noon))
+    service.create(UID, CommitmentCreate(text="Update docs", due_at=yesterday))
 
     fake = _llm_response("query", reply="checked.")
     with patch(LLM_PATCH, return_value=fake) as mock:
-        chat_service.handle(ChatRequest(message="what's on my plate?"))
+        chat_service.handle(UID, ChatRequest(message="what's on my plate?"))
 
     user_prompt = mock.call_args.kwargs["user_prompt"]
     assert "Lunch with Alex" in user_prompt
@@ -202,7 +205,7 @@ def test_general_intent_just_replies(chat_service: ChatService) -> None:
     """general intent is small talk — no creation, no DB write."""
     fake = _llm_response("general", reply="Hey. What's on your mind?")
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="hi"))
+        result = chat_service.handle(UID, ChatRequest(message="hi"))
 
     assert result.intent == "general"
     assert result.commitment is None
@@ -223,7 +226,7 @@ def test_history_is_injected_into_prompt(chat_service: ChatService) -> None:
     fake = _llm_response("general", reply="OK.")
     with patch(LLM_PATCH, return_value=fake) as mock:
         chat_service.handle(
-            ChatRequest(message="actually, add a meeting for Tuesday", history=history)
+            UID, ChatRequest(message="actually, add a meeting for Tuesday", history=history)
         )
 
     user_prompt = mock.call_args.kwargs["user_prompt"]
@@ -244,7 +247,7 @@ def test_strips_markdown_code_fences(chat_service: ChatService) -> None:
         + '\n```'
     )
     with patch(LLM_PATCH, return_value=fake):
-        result = chat_service.handle(ChatRequest(message="hi"))
+        result = chat_service.handle(UID, ChatRequest(message="hi"))
     assert result.reply == "Hi."
 
 
@@ -257,21 +260,21 @@ def test_raises_when_llm_unavailable(chat_service: ChatService) -> None:
     """call_llm returning None bubbles up as ChatError."""
     with patch(LLM_PATCH, return_value=None):
         with pytest.raises(ChatError, match="unavailable"):
-            chat_service.handle(ChatRequest(message="hi"))
+            chat_service.handle(UID, ChatRequest(message="hi"))
 
 
 def test_raises_on_invalid_json(chat_service: ChatService) -> None:
     """Non-JSON LLM output → ChatError."""
     with patch(LLM_PATCH, return_value="this is plainly not JSON"):
         with pytest.raises(ChatError, match="not valid JSON"):
-            chat_service.handle(ChatRequest(message="hi"))
+            chat_service.handle(UID, ChatRequest(message="hi"))
 
 
 def test_raises_on_missing_required_fields(chat_service: ChatService) -> None:
     """JSON missing 'intent' or 'reply' → ChatError."""
     with patch(LLM_PATCH, return_value='{"foo": "bar"}'):
         with pytest.raises(ChatError):
-            chat_service.handle(ChatRequest(message="hi"))
+            chat_service.handle(UID, ChatRequest(message="hi"))
 
 
 def test_raises_on_invalid_intent_value(chat_service: ChatService) -> None:
@@ -281,4 +284,4 @@ def test_raises_on_invalid_intent_value(chat_service: ChatService) -> None:
     )
     with patch(LLM_PATCH, return_value=fake):
         with pytest.raises(ChatError):
-            chat_service.handle(ChatRequest(message="hi"))
+            chat_service.handle(UID, ChatRequest(message="hi"))

@@ -18,18 +18,21 @@ class PushSubscriptionRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
-    def upsert(self, endpoint: str, p256dh: str, auth: str) -> PushSubscriptionResponse:
+    def upsert(
+        self, user_id: UUID, endpoint: str, p256dh: str, auth: str
+    ) -> PushSubscriptionResponse:
         """
-        Insert a subscription, or replace the existing row for this endpoint.
+        Insert a subscription for user_id, or replace the existing row for
+        this endpoint (endpoint is globally unique — one device, one row).
 
         Returns the persisted record (including server-assigned id + created_at).
         """
         existing = self._fetch_by_endpoint(endpoint)
         if existing is not None:
-            # Refresh the keys in case the browser rotated them
+            # Refresh keys + (re)associate the device with this user.
             self._conn.execute(
-                "UPDATE push_subscriptions SET p256dh = ?, auth = ? WHERE endpoint = ?",
-                (p256dh, auth, endpoint),
+                "UPDATE push_subscriptions SET user_id = ?, p256dh = ?, auth = ? WHERE endpoint = ?",
+                (str(user_id), p256dh, auth, endpoint),
             )
             self._conn.commit()
             updated = self._fetch_by_endpoint(endpoint)
@@ -40,10 +43,10 @@ class PushSubscriptionRepository:
         now = datetime.now(UTC).isoformat()
         self._conn.execute(
             """
-            INSERT INTO push_subscriptions (id, endpoint, p256dh, auth, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (new_id, endpoint, p256dh, auth, now),
+            (new_id, str(user_id), endpoint, p256dh, auth, now),
         )
         self._conn.commit()
         fetched = self._fetch_by_endpoint(endpoint)
@@ -51,7 +54,11 @@ class PushSubscriptionRepository:
         return fetched
 
     def delete_by_endpoint(self, endpoint: str) -> bool:
-        """Remove the subscription for this endpoint. Returns True if a row was deleted."""
+        """
+        Remove the subscription for this endpoint. Returns True if a row was
+        deleted. Endpoint is globally unique, so no user scope is needed here
+        (used by both the unsubscribe route and the scheduler's stale-pruning).
+        """
         cursor = self._conn.execute(
             "DELETE FROM push_subscriptions WHERE endpoint = ?",
             (endpoint,),
@@ -59,10 +66,11 @@ class PushSubscriptionRepository:
         self._conn.commit()
         return cursor.rowcount > 0
 
-    def list_all(self) -> list[PushSubscriptionResponse]:
-        """Return all subscriptions — used by the scheduler to broadcast pushes."""
+    def list_for_user(self, user_id: UUID) -> list[PushSubscriptionResponse]:
+        """Return a user's subscriptions — the devices to push reminders to."""
         rows = self._conn.execute(
-            "SELECT * FROM push_subscriptions ORDER BY created_at"
+            "SELECT * FROM push_subscriptions WHERE user_id = ? ORDER BY created_at",
+            (str(user_id),),
         ).fetchall()
         return [self._row_to_response(r) for r in rows]
 

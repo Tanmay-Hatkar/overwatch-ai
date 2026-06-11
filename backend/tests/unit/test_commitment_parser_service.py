@@ -13,6 +13,7 @@ verifies the full chain works end-to-end.
 """
 
 import json
+from uuid import uuid4
 from unittest.mock import patch
 
 import pytest
@@ -28,6 +29,8 @@ from app.services.commitment_service import CommitmentService
 # (not in the orchestrator module), because the parser imported it
 # directly via `from app.agents.orchestrator import call_llm`.
 LLM_PATCH_TARGET = "app.services.commitment_parser_service.call_llm"
+
+UID = uuid4()
 
 
 @pytest.fixture
@@ -45,7 +48,7 @@ def test_parses_valid_response_with_due_at(parser: CommitmentParserService) -> N
     """Standard happy path: LLM returns valid JSON with text + due_at."""
     fake = json.dumps({"text": "Call mom", "due_at": "2026-05-17T15:00:00"})
     with patch(LLM_PATCH_TARGET, return_value=fake):
-        result = parser.parse_and_create("remind me to call mom tomorrow at 3pm")
+        result = parser.parse_and_create(UID, "remind me to call mom tomorrow at 3pm")
 
     assert result.text == "Call mom"
     assert result.due_at is not None
@@ -57,7 +60,7 @@ def test_parses_response_with_null_due_at(parser: CommitmentParserService) -> No
     """LLM returns due_at=null when no time is implied."""
     fake = json.dumps({"text": "Clean my room", "due_at": None})
     with patch(LLM_PATCH_TARGET, return_value=fake):
-        result = parser.parse_and_create("I should clean my room")
+        result = parser.parse_and_create(UID, "I should clean my room")
 
     assert result.text == "Clean my room"
     assert result.due_at is None
@@ -67,7 +70,7 @@ def test_parses_response_with_missing_due_at(parser: CommitmentParserService) ->
     """LLM omitting due_at entirely is treated as null."""
     fake = json.dumps({"text": "No date here"})
     with patch(LLM_PATCH_TARGET, return_value=fake):
-        result = parser.parse_and_create("just text")
+        result = parser.parse_and_create(UID, "just text")
 
     assert result.due_at is None
 
@@ -81,7 +84,7 @@ def test_strips_json_markdown_fence(parser: CommitmentParserService) -> None:
     """Some models wrap JSON in ```json ... ``` despite instructions."""
     fake = '```json\n{"text": "Test", "due_at": null}\n```'
     with patch(LLM_PATCH_TARGET, return_value=fake):
-        result = parser.parse_and_create("test")
+        result = parser.parse_and_create(UID, "test")
     assert result.text == "Test"
 
 
@@ -89,7 +92,7 @@ def test_strips_generic_markdown_fence(parser: CommitmentParserService) -> None:
     """Markdown fences without a language tag also get stripped."""
     fake = '```\n{"text": "Test", "due_at": null}\n```'
     with patch(LLM_PATCH_TARGET, return_value=fake):
-        result = parser.parse_and_create("test")
+        result = parser.parse_and_create(UID, "test")
     assert result.text == "Test"
 
 
@@ -97,7 +100,7 @@ def test_drops_invalid_due_at_gracefully(parser: CommitmentParserService) -> Non
     """Invalid due_at strings are dropped; commitment still created."""
     fake = json.dumps({"text": "Test", "due_at": "not a real date"})
     with patch(LLM_PATCH_TARGET, return_value=fake):
-        result = parser.parse_and_create("test")
+        result = parser.parse_and_create(UID, "test")
 
     assert result.text == "Test"
     assert result.due_at is None  # invalid date silently dropped
@@ -107,7 +110,7 @@ def test_trims_whitespace_from_text(parser: CommitmentParserService) -> None:
     """Surrounding whitespace in text is trimmed before storage."""
     fake = json.dumps({"text": "  Trim me  ", "due_at": None})
     with patch(LLM_PATCH_TARGET, return_value=fake):
-        result = parser.parse_and_create("test")
+        result = parser.parse_and_create(UID, "test")
     assert result.text == "Trim me"
 
 
@@ -120,14 +123,14 @@ def test_raises_when_llm_unavailable(parser: CommitmentParserService) -> None:
     """call_llm returning None (all providers failed) raises CommitmentParseError."""
     with patch(LLM_PATCH_TARGET, return_value=None):
         with pytest.raises(CommitmentParseError, match="LLM unavailable"):
-            parser.parse_and_create("test")
+            parser.parse_and_create(UID, "test")
 
 
 def test_raises_on_invalid_json(parser: CommitmentParserService) -> None:
     """Non-JSON LLM output raises CommitmentParseError."""
     with patch(LLM_PATCH_TARGET, return_value="this is not JSON"):
         with pytest.raises(CommitmentParseError, match="not valid JSON"):
-            parser.parse_and_create("test")
+            parser.parse_and_create(UID, "test")
 
 
 def test_raises_when_text_field_missing(parser: CommitmentParserService) -> None:
@@ -135,7 +138,7 @@ def test_raises_when_text_field_missing(parser: CommitmentParserService) -> None
     fake = json.dumps({"due_at": "2026-05-17T15:00:00"})
     with patch(LLM_PATCH_TARGET, return_value=fake):
         with pytest.raises(CommitmentParseError, match="missing 'text'"):
-            parser.parse_and_create("test")
+            parser.parse_and_create(UID, "test")
 
 
 def test_raises_when_text_is_empty_string(parser: CommitmentParserService) -> None:
@@ -143,7 +146,7 @@ def test_raises_when_text_is_empty_string(parser: CommitmentParserService) -> No
     fake = json.dumps({"text": "", "due_at": None})
     with patch(LLM_PATCH_TARGET, return_value=fake):
         with pytest.raises(CommitmentParseError, match="empty"):
-            parser.parse_and_create("test")
+            parser.parse_and_create(UID, "test")
 
 
 def test_raises_when_text_is_whitespace_only(parser: CommitmentParserService) -> None:
@@ -151,7 +154,7 @@ def test_raises_when_text_is_whitespace_only(parser: CommitmentParserService) ->
     fake = json.dumps({"text": "   ", "due_at": None})
     with patch(LLM_PATCH_TARGET, return_value=fake):
         with pytest.raises(CommitmentParseError, match="empty"):
-            parser.parse_and_create("test")
+            parser.parse_and_create(UID, "test")
 
 
 def test_raises_when_text_is_not_a_string(parser: CommitmentParserService) -> None:
@@ -159,4 +162,4 @@ def test_raises_when_text_is_not_a_string(parser: CommitmentParserService) -> No
     fake = json.dumps({"text": 42, "due_at": None})
     with patch(LLM_PATCH_TARGET, return_value=fake):
         with pytest.raises(CommitmentParseError, match="invalid"):
-            parser.parse_and_create("test")
+            parser.parse_and_create(UID, "test")

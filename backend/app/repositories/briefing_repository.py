@@ -1,53 +1,41 @@
 """
 briefing_repository.py — Data access for cached Briefings.
 
-One row per date (UNIQUE constraint on `date` column). Upserts on save
-so writing twice for the same date overwrites instead of erroring.
+One row per (user_id, date) — the composite uniqueness enforced by the
+schema (migration 004). Upserts on save so writing twice for the same
+user+date overwrites instead of erroring.
 """
 
 import sqlite3
 from datetime import date, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.models.briefing import BriefingResponse
 
 
 class BriefingRepository:
-    """
-    Data access class for cached briefings.
-
-    Construct with an open SQLite connection. The repo doesn't manage the
-    connection lifecycle (caller owns it).
-    """
+    """Data access for cached briefings (scoped by user_id)."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
-    def get_for_date(self, day: date) -> BriefingResponse | None:
-        """
-        Return the cached briefing for the given date, or None if absent.
-
-        Any returned briefing is marked `cached=True` — it came from storage.
-        """
+    def get_for_date(self, user_id: UUID, day: date) -> BriefingResponse | None:
+        """Return this user's cached briefing for the date, or None."""
         row = self._conn.execute(
-            "SELECT * FROM briefings WHERE date = ?",
-            (day.isoformat(),),
+            "SELECT * FROM briefings WHERE user_id = ? AND date = ?",
+            (str(user_id), day.isoformat()),
         ).fetchone()
         return self._row_to_response(row) if row is not None else None
 
-    def save(self, briefing: BriefingResponse, day: date) -> BriefingResponse:
-        """
-        Upsert a briefing for the given date.
-
-        If a row already exists for that date, replace it. The `cached`
-        field on the returned briefing is True (next call to get_for_date
-        will return this row).
-        """
+    def save(
+        self, user_id: UUID, briefing: BriefingResponse, day: date
+    ) -> BriefingResponse:
+        """Upsert a briefing for this user + date."""
         self._conn.execute(
             """
-            INSERT INTO briefings (id, date, content, today_count, overdue_count, generated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(date) DO UPDATE SET
+            INSERT INTO briefings (id, user_id, date, content, today_count, overdue_count, generated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, date) DO UPDATE SET
                 content       = excluded.content,
                 today_count   = excluded.today_count,
                 overdue_count = excluded.overdue_count,
@@ -55,6 +43,7 @@ class BriefingRepository:
             """,
             (
                 str(uuid4()),
+                str(user_id),
                 day.isoformat(),
                 briefing.content,
                 briefing.today_count,
@@ -63,7 +52,7 @@ class BriefingRepository:
             ),
         )
         self._conn.commit()
-        result = self.get_for_date(day)
+        result = self.get_for_date(user_id, day)
         assert result is not None, "Just-upserted briefing unexpectedly missing"
         return result
 

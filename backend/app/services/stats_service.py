@@ -12,6 +12,7 @@ time) but adequate for MVP.
 
 import logging
 from datetime import UTC, date, datetime, timedelta
+from uuid import UUID
 
 from app.models.commitment import CommitmentResponse, CommitmentStatus
 from app.models.stats import DailyCompletion, StatsResponse
@@ -31,11 +32,11 @@ class StatsService:
     def __init__(self, commitment_service: CommitmentService) -> None:
         self._service = commitment_service
 
-    def get_today_stats(self) -> StatsResponse:
+    def get_today_stats(self, user_id: UUID) -> StatsResponse:
         """
-        Return today's stats: completion counts + 7-day sparkline + streak.
+        Return the user's stats: completion counts + 7-day sparkline + streak.
         """
-        all_commitments = self._service.list()  # all statuses
+        all_commitments = self._service.list(user_id)  # all statuses
 
         today = datetime.now(UTC).date()
         week_start = today - timedelta(days=6)  # 7 days inclusive

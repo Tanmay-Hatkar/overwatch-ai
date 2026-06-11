@@ -67,6 +67,14 @@ class UserRepository:
         ).fetchone()
         return self._row_to_response(row) if row is not None else None
 
+    def list_all_ids(self) -> list[UUID]:
+        """
+        Return every user's id. Used by the ReminderScheduler to iterate
+        users and push each their own due reminders.
+        """
+        rows = self._conn.execute("SELECT id FROM users").fetchall()
+        return [UUID(row["id"]) for row in rows]
+
     def create(
         self,
         google_id: str,

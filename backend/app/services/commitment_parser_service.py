@@ -15,6 +15,7 @@ CommitmentParseError. Routes catch this and return 503.
 import json
 import logging
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from app.agents.orchestrator import call_llm
 from app.config import settings
@@ -40,11 +41,12 @@ class CommitmentParserService:
     def __init__(self, commitment_service: CommitmentService) -> None:
         self._service = commitment_service
 
-    def parse_and_create(self, message: str) -> CommitmentResponse:
+    def parse_and_create(self, user_id: UUID, message: str) -> CommitmentResponse:
         """
-        Parse a natural language message and create the resulting commitment.
+        Parse a natural language message and create the commitment for user_id.
 
         Args:
+            user_id: Owner of the new commitment.
             message: User's free-form input (e.g., "call mom tomorrow at 3pm").
 
         Returns:
@@ -71,7 +73,7 @@ class CommitmentParserService:
 
         payload = CommitmentCreate(text=text, due_at=due_at)
         logger.info(f"Parsed commitment: text={text!r}, due_at={due_at}")
-        return self._service.create(payload)
+        return self._service.create(user_id, payload)
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -26,8 +26,11 @@ from fastapi.testclient import TestClient
 from app.database import get_db
 from app.main import app
 from app.migrations import run_migrations
+from app.models.user import UserResponse
 from app.repositories.commitment_repository import CommitmentRepository
+from app.repositories.user_repository import UserRepository
 from app.services.commitment_service import CommitmentService
+from app.services.jwt_service import issue_session_token
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:
@@ -67,6 +70,36 @@ def repo(db_connection: sqlite3.Connection) -> CommitmentRepository:
 def service(repo: CommitmentRepository) -> CommitmentService:
     """A CommitmentService wired to a fresh in-memory repository."""
     return CommitmentService(repo)
+
+
+@pytest.fixture
+def test_user(db_connection: sqlite3.Connection) -> UserResponse:
+    """
+    A persisted user row. Use its `.id` to scope service/repository calls,
+    or pair with `authed_client` for route tests.
+    """
+    return UserRepository(db_connection).create(
+        google_id="g-test", email="test@example.com", name="Test User", picture=None
+    )
+
+
+@pytest.fixture
+def authed_client(
+    db_connection: sqlite3.Connection, test_user: UserResponse
+) -> Generator[TestClient, None, None]:
+    """
+    A TestClient carrying a valid session cookie for `test_user`, so it can
+    hit the auth-gated routes. Same get_db override as `client`.
+    """
+
+    def _override_get_db() -> Generator[sqlite3.Connection, None, None]:
+        yield db_connection
+
+    app.dependency_overrides[get_db] = _override_get_db
+    client = TestClient(app)
+    client.cookies.set("ow_session", issue_session_token(test_user.id))
+    yield client
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture

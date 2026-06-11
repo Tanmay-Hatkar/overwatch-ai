@@ -2,16 +2,9 @@
 test_reminder_scheduler.py — Unit tests for ReminderScheduler._tick().
 
 Tests the synchronous polling logic in isolation by directly invoking
-_tick(). The async start/stop loop is integration territory; we focus
-on the per-tick behavior:
-
-  - First tick silently marks already-overdue items
-  - Subsequent ticks fire pushes for newly-overdue items
-  - Items already notified aren't re-pushed
-  - No subscriptions → no broadcasts but still marked as notified
-
-Uses a real in-memory SQLite via a context-managed connection patched
-into the scheduler.
+_tick(). The scheduler now iterates users (slice 12), so the fixture runs
+the real migrations and seeds one user; commitments and subscriptions are
+created for that user, and the scheduler pushes only to that user's devices.
 """
 
 import sqlite3
@@ -20,10 +13,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.migrations import run_migrations
 from app.models.commitment import CommitmentCreate
 from app.repositories.commitment_repository import CommitmentRepository
 from app.repositories.push_subscription_repository import PushSubscriptionRepository
+from app.repositories.user_repository import UserRepository
 from app.services.commitment_service import CommitmentService
+
 from app.services.reminder_scheduler import ReminderScheduler
 
 CONN_TARGET = "app.services.reminder_scheduler.get_connection"
@@ -32,15 +28,12 @@ CONN_TARGET = "app.services.reminder_scheduler.get_connection"
 @pytest.fixture
 def db_factory(tmp_path):
     """
-    File-based SQLite so the scheduler can open/close fresh connections
-    per tick (the way it does in production) while keeping the data.
+    File-based SQLite so the scheduler can open/close fresh connections per
+    tick (as in production). Runs the real migrations (full schema incl.
+    users + user_id scoping) and seeds exactly one user, so the scheduler's
+    per-user iteration has someone to iterate.
 
-    Returns a callable that:
-      - opens + initializes the schema if the file doesn't have it yet
-      - returns a fresh connection each call (for the patched get_connection)
-
-    Plus a `setup_conn` accessor for the test to seed data without
-    going through the patched factory.
+    Returns a callable returning a fresh connection each call.
     """
     db_path = tmp_path / "test.db"
 
@@ -49,24 +42,23 @@ def db_factory(tmp_path):
         conn.row_factory = sqlite3.Row
         return conn
 
-    # Initialize schema once
     init_conn = _open()
-    init_conn.execute("""
-        CREATE TABLE IF NOT EXISTS commitments (
-            id TEXT PRIMARY KEY, text TEXT NOT NULL, due_at TEXT,
-            status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-        )
-    """)
-    init_conn.execute("""
-        CREATE TABLE IF NOT EXISTS push_subscriptions (
-            id TEXT PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE,
-            p256dh TEXT NOT NULL, auth TEXT NOT NULL, created_at TEXT NOT NULL
-        )
-    """)
-    init_conn.commit()
+    run_migrations(init_conn)
+    UserRepository(init_conn).create(
+        google_id="g-sched", email="sched@example.com", name="Sched", picture=None
+    )
     init_conn.close()
 
     return _open
+
+
+def _uid(db_factory):
+    """The id of the single seeded user."""
+    conn = db_factory()
+    try:
+        return UserRepository(conn).list_all_ids()[0]
+    finally:
+        conn.close()
 
 
 @pytest.fixture
@@ -80,10 +72,9 @@ def _seed_overdue_commitment(db_factory, text: str = "Old task") -> str:
     """Insert a commitment whose due_at is in the past. Returns its id."""
     conn = db_factory()
     try:
-        repo = CommitmentRepository(conn)
-        service = CommitmentService(repo)
+        service = CommitmentService(CommitmentRepository(conn))
         past = datetime.now(UTC) - timedelta(hours=1)
-        return str(service.create(CommitmentCreate(text=text, due_at=past)).id)
+        return str(service.create(_uid(db_factory), CommitmentCreate(text=text, due_at=past)).id)
     finally:
         conn.close()
 
@@ -92,7 +83,7 @@ def _seed_subscription(db_factory) -> None:
     conn = db_factory()
     try:
         PushSubscriptionRepository(conn).upsert(
-            endpoint="https://push.example/a", p256dh="k", auth="a"
+            _uid(db_factory), endpoint="https://push.example/a", p256dh="k", auth="a"
         )
     finally:
         conn.close()
@@ -101,10 +92,9 @@ def _seed_subscription(db_factory) -> None:
 def _seed_future_commitment(db_factory, text: str = "Future task") -> None:
     conn = db_factory()
     try:
-        repo = CommitmentRepository(conn)
-        service = CommitmentService(repo)
+        service = CommitmentService(CommitmentRepository(conn))
         future = datetime.now(UTC) + timedelta(hours=1)
-        service.create(CommitmentCreate(text=text, due_at=future))
+        service.create(_uid(db_factory), CommitmentCreate(text=text, due_at=future))
     finally:
         conn.close()
 
@@ -123,7 +113,6 @@ def test_first_tick_silently_marks_overdue(db_factory, scheduler) -> None:
 
 def test_second_tick_fires_push_for_newly_overdue(db_factory, scheduler) -> None:
     """After the first-tick suppression, new overdue items DO fire pushes."""
-    # First tick: no commitments — flips _is_first_tick to False without pushing
     with patch(CONN_TARGET, side_effect=db_factory):
         scheduler._tick()
     assert scheduler._is_first_tick is False

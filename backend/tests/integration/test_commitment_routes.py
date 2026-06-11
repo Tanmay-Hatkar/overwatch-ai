@@ -1,7 +1,7 @@
 """
 test_commitment_routes.py — Integration tests for the /commitments endpoints.
 
-Strategy: use FastAPI's TestClient (via the `client` fixture in conftest.py)
+Strategy: use FastAPI's TestClient (via the `authed_client` fixture in conftest.py)
 to send real HTTP requests through the full stack:
 
     TestClient -> FastAPI -> route handler -> service -> repository -> in-memory DB
@@ -26,9 +26,9 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------------
 
 
-def test_post_creates_commitment(client: TestClient) -> None:
+def test_post_creates_commitment(authed_client: TestClient) -> None:
     """POST returns 201 with the created commitment including server-generated fields."""
-    response = client.post("/commitments", json={"text": "Test create", "due_at": None})
+    response = authed_client.post("/commitments", json={"text": "Test create", "due_at": None})
 
     assert response.status_code == 201
     body = response.json()
@@ -40,15 +40,15 @@ def test_post_creates_commitment(client: TestClient) -> None:
     assert "updated_at" in body
 
 
-def test_post_rejects_empty_text(client: TestClient) -> None:
+def test_post_rejects_empty_text(authed_client: TestClient) -> None:
     """Pydantic validation rejects empty text (min_length=1)."""
-    response = client.post("/commitments", json={"text": "", "due_at": None})
+    response = authed_client.post("/commitments", json={"text": "", "due_at": None})
     assert response.status_code == 422  # Unprocessable Entity
 
 
-def test_post_rejects_missing_text(client: TestClient) -> None:
+def test_post_rejects_missing_text(authed_client: TestClient) -> None:
     """text is required."""
-    response = client.post("/commitments", json={"due_at": None})
+    response = authed_client.post("/commitments", json={"due_at": None})
     assert response.status_code == 422
 
 
@@ -57,32 +57,32 @@ def test_post_rejects_missing_text(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_list_returns_empty_array_when_no_commitments(client: TestClient) -> None:
+def test_get_list_returns_empty_array_when_no_commitments(authed_client: TestClient) -> None:
     """An empty database returns an empty array, not 404."""
-    response = client.get("/commitments")
+    response = authed_client.get("/commitments")
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_get_list_returns_all_commitments(client: TestClient) -> None:
+def test_get_list_returns_all_commitments(authed_client: TestClient) -> None:
     """List returns every commitment that's been created."""
-    client.post("/commitments", json={"text": "A", "due_at": None})
-    client.post("/commitments", json={"text": "B", "due_at": None})
+    authed_client.post("/commitments", json={"text": "A", "due_at": None})
+    authed_client.post("/commitments", json={"text": "B", "due_at": None})
 
-    response = client.get("/commitments")
+    response = authed_client.get("/commitments")
 
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 2
 
 
-def test_get_list_filters_by_status(client: TestClient) -> None:
+def test_get_list_filters_by_status(authed_client: TestClient) -> None:
     """?status_filter=done returns only done commitments."""
-    a = client.post("/commitments", json={"text": "A", "due_at": None}).json()
-    client.post("/commitments", json={"text": "B", "due_at": None})
-    client.patch(f"/commitments/{a['id']}", json={"status": "done"})
+    a = authed_client.post("/commitments", json={"text": "A", "due_at": None}).json()
+    authed_client.post("/commitments", json={"text": "B", "due_at": None})
+    authed_client.patch(f"/commitments/{a['id']}", json={"status": "done"})
 
-    response = client.get("/commitments", params={"status_filter": "done"})
+    response = authed_client.get("/commitments", params={"status_filter": "done"})
 
     assert response.status_code == 200
     body = response.json()
@@ -95,25 +95,25 @@ def test_get_list_filters_by_status(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_by_id_returns_commitment(client: TestClient) -> None:
+def test_get_by_id_returns_commitment(authed_client: TestClient) -> None:
     """GET by id returns the matching commitment."""
-    created = client.post("/commitments", json={"text": "Find me", "due_at": None}).json()
+    created = authed_client.post("/commitments", json={"text": "Find me", "due_at": None}).json()
 
-    response = client.get(f"/commitments/{created['id']}")
+    response = authed_client.get(f"/commitments/{created['id']}")
 
     assert response.status_code == 200
     assert response.json()["id"] == created["id"]
 
 
-def test_get_by_id_returns_404_for_missing(client: TestClient) -> None:
+def test_get_by_id_returns_404_for_missing(authed_client: TestClient) -> None:
     """GET an id that doesn't exist returns 404."""
-    response = client.get(f"/commitments/{uuid4()}")
+    response = authed_client.get(f"/commitments/{uuid4()}")
     assert response.status_code == 404
 
 
-def test_get_by_id_returns_422_for_invalid_uuid(client: TestClient) -> None:
+def test_get_by_id_returns_422_for_invalid_uuid(authed_client: TestClient) -> None:
     """A non-UUID path param returns 422 (validation error)."""
-    response = client.get("/commitments/not-a-uuid")
+    response = authed_client.get("/commitments/not-a-uuid")
     assert response.status_code == 422
 
 
@@ -122,29 +122,29 @@ def test_get_by_id_returns_422_for_invalid_uuid(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_patch_updates_status(client: TestClient) -> None:
+def test_patch_updates_status(authed_client: TestClient) -> None:
     """PATCH with a new status returns 200 and the updated commitment."""
-    created = client.post("/commitments", json={"text": "A", "due_at": None}).json()
+    created = authed_client.post("/commitments", json={"text": "A", "due_at": None}).json()
 
-    response = client.patch(f"/commitments/{created['id']}", json={"status": "done"})
+    response = authed_client.patch(f"/commitments/{created['id']}", json={"status": "done"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "done"
 
 
-def test_patch_updates_text(client: TestClient) -> None:
+def test_patch_updates_text(authed_client: TestClient) -> None:
     """PATCH can change just the text field."""
-    created = client.post("/commitments", json={"text": "Old", "due_at": None}).json()
+    created = authed_client.post("/commitments", json={"text": "Old", "due_at": None}).json()
 
-    response = client.patch(f"/commitments/{created['id']}", json={"text": "New"})
+    response = authed_client.patch(f"/commitments/{created['id']}", json={"text": "New"})
 
     assert response.status_code == 200
     assert response.json()["text"] == "New"
 
 
-def test_patch_returns_404_for_missing(client: TestClient) -> None:
+def test_patch_returns_404_for_missing(authed_client: TestClient) -> None:
     """PATCH on a missing id returns 404."""
-    response = client.patch(f"/commitments/{uuid4()}", json={"text": "X"})
+    response = authed_client.patch(f"/commitments/{uuid4()}", json={"text": "X"})
     assert response.status_code == 404
 
 
@@ -153,19 +153,19 @@ def test_patch_returns_404_for_missing(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_delete_removes_commitment(client: TestClient) -> None:
+def test_delete_removes_commitment(authed_client: TestClient) -> None:
     """DELETE returns 204 and the commitment is gone from subsequent reads."""
-    created = client.post("/commitments", json={"text": "Delete me", "due_at": None}).json()
+    created = authed_client.post("/commitments", json={"text": "Delete me", "due_at": None}).json()
 
-    delete_response = client.delete(f"/commitments/{created['id']}")
+    delete_response = authed_client.delete(f"/commitments/{created['id']}")
     assert delete_response.status_code == 204
 
     # Confirm it's actually gone
-    get_response = client.get(f"/commitments/{created['id']}")
+    get_response = authed_client.get(f"/commitments/{created['id']}")
     assert get_response.status_code == 404
 
 
-def test_delete_returns_404_for_missing(client: TestClient) -> None:
+def test_delete_returns_404_for_missing(authed_client: TestClient) -> None:
     """DELETE on a missing id returns 404."""
-    response = client.delete(f"/commitments/{uuid4()}")
+    response = authed_client.delete(f"/commitments/{uuid4()}")
     assert response.status_code == 404

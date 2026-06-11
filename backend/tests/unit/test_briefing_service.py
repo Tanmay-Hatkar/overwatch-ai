@@ -10,6 +10,7 @@ The LLM is mocked at the import site in briefing_service. Tests cover:
 """
 
 from datetime import date, datetime, timedelta
+from uuid import uuid4
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +24,8 @@ from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
 
 LLM_PATCH_TARGET = "app.services.briefing_service.call_llm"
+
+UID = uuid4()
 
 
 @pytest.fixture
@@ -47,7 +50,7 @@ def briefing_service(
 def test_generates_briefing_with_no_commitments(briefing_service: BriefingService) -> None:
     """Briefing works (and is non-empty) even with no commitments."""
     with patch(LLM_PATCH_TARGET, return_value="Good morning. Nothing today."):
-        result = briefing_service.generate_today()
+        result = briefing_service.generate_today(UID)
 
     assert isinstance(result, BriefingResponse)
     assert result.content == "Good morning. Nothing today."
@@ -58,7 +61,7 @@ def test_generates_briefing_with_no_commitments(briefing_service: BriefingServic
 def test_strips_whitespace_from_briefing_content(briefing_service: BriefingService) -> None:
     """Leading/trailing whitespace is stripped before returning."""
     with patch(LLM_PATCH_TARGET, return_value="   Briefing here.   "):
-        result = briefing_service.generate_today()
+        result = briefing_service.generate_today(UID)
     assert result.content == "Briefing here."
 
 
@@ -76,10 +79,10 @@ def test_buckets_today_commitments(
     briefing_service: BriefingService, service: CommitmentService
 ) -> None:
     """Open commitments with due_at on today's date go in the today bucket."""
-    service.create(CommitmentCreate(text="Call mom", due_at=_today_at(15)))
+    service.create(UID, CommitmentCreate(text="Call mom", due_at=_today_at(15)))
 
     with patch(LLM_PATCH_TARGET, return_value="briefing") as mock:
-        result = briefing_service.generate_today()
+        result = briefing_service.generate_today(UID)
 
     assert result.today_count == 1
     assert result.overdue_count == 0
@@ -93,10 +96,10 @@ def test_buckets_overdue_commitments(
 ) -> None:
     """Commitments with due_at before today are overdue."""
     yesterday = datetime.now() - timedelta(days=1)
-    service.create(CommitmentCreate(text="Old task", due_at=yesterday))
+    service.create(UID, CommitmentCreate(text="Old task", due_at=yesterday))
 
     with patch(LLM_PATCH_TARGET, return_value="briefing"):
-        result = briefing_service.generate_today()
+        result = briefing_service.generate_today(UID)
 
     assert result.today_count == 0
     assert result.overdue_count == 1
@@ -106,10 +109,10 @@ def test_excludes_commitments_without_due_at(
     briefing_service: BriefingService, service: CommitmentService
 ) -> None:
     """Floating commitments (no due_at) don't appear in either bucket."""
-    service.create(CommitmentCreate(text="Sometime task", due_at=None))
+    service.create(UID, CommitmentCreate(text="Sometime task", due_at=None))
 
     with patch(LLM_PATCH_TARGET, return_value="briefing"):
-        result = briefing_service.generate_today()
+        result = briefing_service.generate_today(UID)
 
     assert result.today_count == 0
     assert result.overdue_count == 0
@@ -119,11 +122,11 @@ def test_excludes_done_commitments(
     briefing_service: BriefingService, service: CommitmentService
 ) -> None:
     """Done commitments don't appear in the briefing."""
-    c = service.create(CommitmentCreate(text="Done thing", due_at=_today_at(12)))
-    service.update(c.id, CommitmentUpdate(status=CommitmentStatus.DONE))
+    c = service.create(UID, CommitmentCreate(text="Done thing", due_at=_today_at(12)))
+    service.update(UID, c.id, CommitmentUpdate(status=CommitmentStatus.DONE))
 
     with patch(LLM_PATCH_TARGET, return_value="briefing"):
-        result = briefing_service.generate_today()
+        result = briefing_service.generate_today(UID)
 
     assert result.today_count == 0
 
@@ -133,10 +136,10 @@ def test_excludes_future_commitments(
 ) -> None:
     """Commitments due tomorrow or later don't appear in today's briefing."""
     tomorrow = datetime.now() + timedelta(days=1)
-    service.create(CommitmentCreate(text="Tomorrow task", due_at=tomorrow))
+    service.create(UID, CommitmentCreate(text="Tomorrow task", due_at=tomorrow))
 
     with patch(LLM_PATCH_TARGET, return_value="briefing"):
-        result = briefing_service.generate_today()
+        result = briefing_service.generate_today(UID)
 
     assert result.today_count == 0
     assert result.overdue_count == 0
@@ -151,14 +154,14 @@ def test_raises_when_llm_returns_none(briefing_service: BriefingService) -> None
     """call_llm returning None (all providers failed) raises BriefingGenerationError."""
     with patch(LLM_PATCH_TARGET, return_value=None):
         with pytest.raises(BriefingGenerationError, match="empty"):
-            briefing_service.generate_today()
+            briefing_service.generate_today(UID)
 
 
 def test_raises_when_llm_returns_whitespace_only(briefing_service: BriefingService) -> None:
     """Whitespace-only LLM response is treated as empty."""
     with patch(LLM_PATCH_TARGET, return_value="   \n  "):
         with pytest.raises(BriefingGenerationError, match="empty"):
-            briefing_service.generate_today()
+            briefing_service.generate_today(UID)
 
 
 # ---------------------------------------------------------------------------
@@ -169,15 +172,15 @@ def test_raises_when_llm_returns_whitespace_only(briefing_service: BriefingServi
 def test_first_call_marks_briefing_as_fresh(briefing_service: BriefingService) -> None:
     """The first call to get_today() generates fresh (cached=False)."""
     with patch(LLM_PATCH_TARGET, return_value="Fresh briefing."):
-        result = briefing_service.get_today()
+        result = briefing_service.get_today(UID)
     assert result.cached is False
 
 
 def test_second_call_returns_cached_briefing(briefing_service: BriefingService) -> None:
     """A second call with no commitment changes returns the cache (cached=True)."""
     with patch(LLM_PATCH_TARGET, return_value="First briefing.") as mock:
-        first = briefing_service.get_today()
-        second = briefing_service.get_today()
+        first = briefing_service.get_today(UID)
+        second = briefing_service.get_today(UID)
 
     assert first.cached is False
     assert second.cached is True
@@ -191,13 +194,13 @@ def test_cache_invalidated_when_commitment_changes(
 ) -> None:
     """Modifying a commitment after caching invalidates the briefing."""
     with patch(LLM_PATCH_TARGET, return_value="First briefing."):
-        briefing_service.get_today()
+        briefing_service.get_today(UID)
 
     # Create a commitment (this updates the commitments table)
-    service.create(CommitmentCreate(text="New task", due_at=None))
+    service.create(UID, CommitmentCreate(text="New task", due_at=None))
 
     with patch(LLM_PATCH_TARGET, return_value="Regenerated briefing.") as mock:
-        result = briefing_service.get_today()
+        result = briefing_service.get_today(UID)
 
     assert result.cached is False
     assert result.content == "Regenerated briefing."
@@ -207,8 +210,8 @@ def test_cache_invalidated_when_commitment_changes(
 def test_force_regenerate_skips_cache(briefing_service: BriefingService) -> None:
     """force_regenerate=True bypasses the cache even when it would be fresh."""
     with patch(LLM_PATCH_TARGET, return_value="First.") as mock:
-        briefing_service.get_today()
-        briefing_service.get_today(force_regenerate=True)
+        briefing_service.get_today(UID)
+        briefing_service.get_today(UID, force_regenerate=True)
 
     assert mock.call_count == 2  # both calls hit the LLM
 
@@ -223,7 +226,7 @@ def test_briefing_without_calendar_service_renders_no_events(
 ) -> None:
     """A briefing service without a calendar service injects '(none)' for events."""
     with patch(LLM_PATCH_TARGET, return_value="OK briefing.") as mock:
-        briefing_service.generate_today()
+        briefing_service.generate_today(UID)
 
     user_prompt = mock.call_args.kwargs["user_prompt"]
     # When no calendar service is wired, the events count should be 0
@@ -239,7 +242,7 @@ def test_briefing_with_calendar_service_injects_events(
     service_with_cal = BriefingService(service, briefing_repo, calendar_service)
 
     with patch(LLM_PATCH_TARGET, return_value="OK briefing.") as mock:
-        service_with_cal.generate_today()
+        service_with_cal.generate_today(UID)
 
     user_prompt = mock.call_args.kwargs["user_prompt"]
     # Mock provider returns events on weekdays, none on weekends —

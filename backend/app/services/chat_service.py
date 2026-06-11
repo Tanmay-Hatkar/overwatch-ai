@@ -21,12 +21,12 @@ message.
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.agents.orchestrator import call_llm
 from app.config import settings
 from app.models.chat import (
-    ChatIntent,
     ChatRequest,
     ChatResponse,
     _ChatIntentResult,
@@ -59,11 +59,11 @@ class ChatService:
         self._service = commitment_service
         self._calendar = calendar_service
 
-    def handle(self, request: ChatRequest) -> ChatResponse:
-        """Process one chat message end-to-end."""
+    def handle(self, user_id: UUID, request: ChatRequest) -> ChatResponse:
+        """Process one chat message end-to-end, scoped to user_id."""
         user_tz = self._resolve_timezone(request.timezone)
         now_local = datetime.now(user_tz)
-        user_prompt = self._build_user_prompt(request, now_local)
+        user_prompt = self._build_user_prompt(user_id, request, now_local)
 
         raw = call_llm(
             system_prompt=SYSTEM_PROMPT,
@@ -78,7 +78,7 @@ class ChatService:
 
         commitment: CommitmentResponse | None = None
         if result.intent == "add_commitment":
-            commitment = self._create_commitment(result, user_tz)
+            commitment = self._create_commitment(user_id, result, user_tz)
 
         return ChatResponse(
             reply=result.reply,
@@ -106,7 +106,9 @@ class ChatService:
                 logger.warning("chat: unknown timezone %r, defaulting to UTC", tz_name)
         return ZoneInfo("UTC")
 
-    def _build_user_prompt(self, request: ChatRequest, now_local: datetime) -> str:
+    def _build_user_prompt(
+        self, user_id: UUID, request: ChatRequest, now_local: datetime
+    ) -> str:
         """
         Build the user prompt. `now_local` is the current moment rendered in
         the user's timezone, so 'today', 'tonight', and the date table are all
@@ -129,8 +131,8 @@ class ChatService:
         # "in 30 minutes", "tonight at 7", "in an hour" correctly.
         now_time = now_local.strftime("%I:%M %p").lstrip("0")
 
-        # Pull current state for query intent
-        open_items = self._service.list(status=CommitmentStatus.OPEN)
+        # Pull current state for query intent — scoped to this user.
+        open_items = self._service.list(user_id, status=CommitmentStatus.OPEN)
         today_date = now_local.date()
 
         today_open = [c for c in open_items if c.due_at and c.due_at.date() == today_date]
@@ -209,7 +211,7 @@ class ChatService:
             raise ChatError(f"LLM output missing required fields: {e}") from e
 
     def _create_commitment(
-        self, result: _ChatIntentResult, user_tz: ZoneInfo
+        self, user_id: UUID, result: _ChatIntentResult, user_tz: ZoneInfo
     ) -> CommitmentResponse | None:
         """
         For add_commitment intents, persist the extracted commitment.
@@ -238,4 +240,4 @@ class ChatService:
                 logger.warning(f"chat: invalid due_at dropped: {result.due_at!r}")
 
         payload = CommitmentCreate(text=text, due_at=due_at)
-        return self._service.create(payload)
+        return self._service.create(user_id, payload)

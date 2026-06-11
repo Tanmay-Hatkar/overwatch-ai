@@ -14,10 +14,10 @@ from fastapi.testclient import TestClient
 LLM_PATCH_TARGET = "app.services.briefing_service.call_llm"
 
 
-def test_get_today_returns_briefing(client: TestClient) -> None:
+def test_get_today_returns_briefing(authed_client: TestClient) -> None:
     """Happy path: GET /briefings/today returns 200 with the briefing body."""
     with patch(LLM_PATCH_TARGET, return_value="Good morning. Test briefing."):
-        response = client.get("/briefings/today")
+        response = authed_client.get("/briefings/today")
 
     assert response.status_code == 200
     body = response.json()
@@ -27,23 +27,23 @@ def test_get_today_returns_briefing(client: TestClient) -> None:
     assert "generated_at" in body
 
 
-def test_get_today_returns_503_when_llm_unavailable(client: TestClient) -> None:
+def test_get_today_returns_503_when_llm_unavailable(authed_client: TestClient) -> None:
     """When the LLM returns None, /briefings/today returns 503."""
     with patch(LLM_PATCH_TARGET, return_value=None):
-        response = client.get("/briefings/today")
+        response = authed_client.get("/briefings/today")
     assert response.status_code == 503
 
 
-def test_get_today_includes_commitment_counts(client: TestClient) -> None:
+def test_get_today_includes_commitment_counts(authed_client: TestClient) -> None:
     """Counts in the response match commitments in the database."""
     today_noon = datetime.combine(date.today(), datetime.min.time().replace(hour=12))
-    client.post(
+    authed_client.post(
         "/commitments",
         json={"text": "Today's task", "due_at": today_noon.isoformat()},
     )
 
     with patch(LLM_PATCH_TARGET, return_value="briefing"):
-        response = client.get("/briefings/today")
+        response = authed_client.get("/briefings/today")
 
     assert response.status_code == 200
     assert response.json()["today_count"] == 1

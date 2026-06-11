@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   getWeekEvents,
@@ -24,13 +24,19 @@ import {
  */
 
 const HOUR_HEIGHT = 44
-const START_HOUR = 8
-const END_HOUR = 19
+// Full day, midnight to midnight (12am → 12am). The grid is tall (~1000px),
+// so the time portion scrolls vertically inside a fixed-height viewport and
+// auto-scrolls to the current hour on load — like a Google/Apple day view.
+const START_HOUR = 0
+const END_HOUR = 24
 const TOTAL_HOURS = END_HOUR - START_HOUR
 const TOTAL_HEIGHT = TOTAL_HOURS * HOUR_HEIGHT
 const HOURS = Array.from({ length: TOTAL_HOURS }, (_, i) => START_HOUR + i)
+// Height of the scrollable time viewport (~11 hours visible at once).
+const GRID_VIEWPORT_HEIGHT = 484
 
 function formatHour(h) {
+  if (h === 0 || h === 24) return '12a'
   if (h === 12) return '12p'
   return h < 12 ? `${h}a` : `${h - 12}p`
 }
@@ -84,10 +90,23 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
   // null = unknown (still checking), true/false once known. Drives whether
   // the "Connect Google Calendar" CTA shows in the header.
   const [connected, setConnected] = useState(null)
+  // The scrollable time viewport — auto-scrolled to the current hour on load
+  // so the user lands on "now" instead of midnight in a 24-hour grid.
+  const gridScrollRef = useRef(null)
+
+  // Once the grid is rendered, scroll it so the current hour sits near the
+  // top (with one hour of lead-in above). Runs after loading completes.
+  useEffect(() => {
+    if (loading || !gridScrollRef.current) return
+    const currentHour = new Date().getHours()
+    gridScrollRef.current.scrollTop = Math.max(0, (currentHour - 1) * HOUR_HEIGHT)
+  }, [loading])
 
   useEffect(() => {
+    // `loading` starts true for the first paint (skeleton). We intentionally
+    // don't flip it back on refetch — the grid updates in place instead of
+    // flashing the skeleton each time refreshTrigger changes.
     let cancelled = false
-    setLoading(true)
     getWeekEvents()
       .then((data) => {
         if (!cancelled) setEvents(data || [])
@@ -258,7 +277,13 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
                 </div>
               </div>
 
-              {/* Time grid */}
+              {/* Time grid — scrolls vertically within a fixed viewport so the
+                  full 24-hour day is reachable without a giant card. */}
+              <div
+                ref={gridScrollRef}
+                className="overflow-y-auto"
+                style={{ maxHeight: `${GRID_VIEWPORT_HEIGHT}px` }}
+              >
               <div className="flex">
                 {/* Time labels */}
                 <div className="shrink-0 flex flex-col" style={{ width: '32px' }}>
@@ -316,6 +341,7 @@ export default function WeeklyCalendar({ commitments = [], refreshTrigger }) {
                     )
                   })}
                 </div>
+              </div>
               </div>
             </div>
           </div>

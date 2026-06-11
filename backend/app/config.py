@@ -39,7 +39,14 @@ class Settings(BaseSettings):
     # =========================================================================
     # Web Push notifications (VAPID)
     # =========================================================================
-    vapid_public_key: str = Field(default="", description="VAPID public key (base64url)")
+    # The VAPID PUBLIC key is not a secret — it's served at /push/vapid-public-key
+    # and embedded in every browser subscription. Defaulting it here makes push
+    # work without depending on a (historically flaky) hosting env var. An env
+    # var still overrides it if set. The PRIVATE key below stays env-only.
+    vapid_public_key: str = Field(
+        default="BGY5XeF-SVJstLlSTnm1nOLIjGNU6U-a4m8Riir9jBM2KRFmckxw6n0PJmc8Y7M-DyB3Hl9Oav44u7E84gQthdE",
+        description="VAPID public key (base64url). Public by design; safe to default.",
+    )
     vapid_private_key: str = Field(default="", description="VAPID private key (base64url, secret)")
     vapid_subject: str = Field(
         default="mailto:admin@example.com",

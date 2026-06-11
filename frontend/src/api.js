@@ -36,27 +36,47 @@ async function apiFetch(path, options = {}) {
     if (token) authHeader.Authorization = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    credentials: 'include',
-    ...options,
-    headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...authHeader,
-      ...(options.headers || {}),
-    },
-  })
+  // Retry transient NETWORK failures (browser "Failed to fetch" — a one-off
+  // dropped connection, a blip during a redeploy, etc.). Only safe, idempotent
+  // GETs are retried so we never accidentally double-create on a POST/PATCH.
+  // HTTP error responses (401/404/500) are NOT retried — those are real.
+  const method = (options.method || 'GET').toUpperCase()
+  const maxAttempts = method === 'GET' ? 3 : 1
 
-  if (!response.ok) {
-    // Surface 401 specially — callers can react with "redirect to login".
-    if (response.status === 401) {
-      const err = new Error('Not signed in')
-      err.status = 401
-      throw err
+  let lastErr
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        credentials: 'include',
+        ...options,
+        headers: {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...authHeader,
+          ...(options.headers || {}),
+        },
+      })
+
+      if (!response.ok) {
+        // Surface 401 specially — callers can react with "redirect to login".
+        if (response.status === 401) {
+          const err = new Error('Not signed in')
+          err.status = 401
+          throw err
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      if (response.status === 204) return null
+      return await response.json()
+    } catch (err) {
+      // fetch() throws a TypeError only for network-level failures; the HTTP
+      // errors thrown above are plain Errors. Retry only the former.
+      const isNetworkError = err instanceof TypeError
+      if (!isNetworkError || attempt === maxAttempts) throw err
+      lastErr = err
+      await new Promise((resolve) => setTimeout(resolve, attempt * 400)) // 400ms, 800ms
     }
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
   }
-  if (response.status === 204) return null
-  return await response.json()
+  throw lastErr
 }
 
 // ---------------------------------------------------------------------------

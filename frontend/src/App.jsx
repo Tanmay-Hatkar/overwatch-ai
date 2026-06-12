@@ -13,6 +13,11 @@ import WeeklyCalendar from './components/WeeklyCalendar'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useReminders } from './hooks/useReminders'
 import { listCommitments } from './api'
+import {
+  initNotificationActions,
+  ensureNotificationPermission,
+  syncCommitmentReminders,
+} from './lib/notifications'
 import './App.css'
 
 /**
@@ -99,6 +104,20 @@ function Overwatch() {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // Native alarm setup (no-op on web): register the Snooze/Done actions +
+  // their handler, and request notification permission, once on mount.
+  useEffect(() => {
+    initNotificationActions()
+    ensureNotificationPermission()
+  }, [])
+
+  // Keep the on-device reminder schedule in sync with the commitments. Runs
+  // whenever the list changes, so adding/rescheduling/completing a commitment
+  // updates the OS-scheduled alarms (no-op on web).
+  useEffect(() => {
+    syncCommitmentReminders(commitments)
+  }, [commitments])
 
   // After the Google Calendar OAuth flow, the backend redirects back here
   // with ?calendar=<status>. Surface it as a toast, refresh so the calendar

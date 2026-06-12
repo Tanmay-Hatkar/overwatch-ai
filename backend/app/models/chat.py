@@ -72,12 +72,22 @@ class ChatResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CommitmentDraft(BaseModel):
+    """One extracted commitment within a multi-add turn."""
+
+    text: str
+    due_at: str | None = None  # ISO 8601 datetime or null
+
+
 # Internal-only schema for what the LLM returns when classifying
 class _ChatIntentResult(BaseModel):
     """Parsed structured output from the LLM's intent-classification call."""
 
     intent: ChatIntent
-    # For add_commitment intents, the LLM also returns the extracted commitment fields
+    # For a SINGLE add_commitment, the LLM fills text + due_at.
     text: str | None = None
     due_at: str | None = None  # ISO 8601 datetime or null
+    # For MULTIPLE commitments in one message, the LLM fills items instead.
+    # When present (non-empty), it takes precedence over text/due_at.
+    items: list[CommitmentDraft] | None = None
     reply: str  # Always; the natural-language acknowledgment / answer / chat

@@ -88,6 +88,49 @@ def test_add_commitment_skips_create_when_text_missing(chat_service: ChatService
     assert result.reply  # but we still get a reply
 
 
+def test_multi_add_creates_all_items(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """When the LLM returns `items`, every commitment is created."""
+    fake = _llm_response(
+        "add_commitment",
+        items=[
+            {"text": "Renew passport", "due_at": None},
+            {"text": "Book dentist", "due_at": None},
+            {"text": "Email landlord", "due_at": None},
+        ],
+        reply="Added 3 things to your list.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="passport, dentist, landlord"))
+
+    # The response carries the first for the UI toast...
+    assert result.commitment is not None
+    assert result.commitment.text == "Renew passport"
+    # ...but all three were actually persisted for this user.
+    texts = {c.text for c in service.list(UID)}
+    assert {"Renew passport", "Book dentist", "Email landlord"} <= texts
+
+
+def test_multi_add_items_take_precedence_and_skip_blanks(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """`items` wins over top-level text; blank items are skipped, not fatal."""
+    fake = _llm_response(
+        "add_commitment",
+        text="ignored because items present",
+        items=[{"text": "Real task", "due_at": None}, {"text": "  ", "due_at": None}],
+        reply="Added it.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        chat_service.handle(UID, ChatRequest(message="..."))
+
+    texts = [c.text for c in service.list(UID)]
+    assert "Real task" in texts
+    assert "ignored because items present" not in texts
+    assert "" not in texts and "  " not in texts
+
+
 def test_add_commitment_drops_invalid_due_at(chat_service: ChatService) -> None:
     """A malformed due_at is silently dropped; commitment is still created."""
     fake = _llm_response(

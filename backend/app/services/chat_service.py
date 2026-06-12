@@ -93,7 +93,10 @@ class ChatService:
 
         commitment: CommitmentResponse | None = None
         if result.intent == "add_commitment":
-            commitment = self._create_commitment(user_id, result, user_tz)
+            created = self._create_commitments(user_id, result, user_tz)
+            # Return the first created record for the UI's toast; the client
+            # refreshes its list afterward, so all created items appear.
+            commitment = created[0] if created else None
 
         # Persist this exchange so it's part of future context.
         if self._conversation is not None:
@@ -236,34 +239,53 @@ class ChatService:
             logger.warning(f"Chat LLM returned malformed structured output: {data!r}")
             raise ChatError(f"LLM output missing required fields: {e}") from e
 
-    def _create_commitment(
+    def _create_commitments(
         self, user_id: UUID, result: _ChatIntentResult, user_tz: ZoneInfo
-    ) -> CommitmentResponse | None:
+    ) -> list[CommitmentResponse]:
         """
-        For add_commitment intents, persist the extracted commitment.
+        For add_commitment intents, persist one OR many commitments.
 
-        The LLM emits due_at as a naive wall-clock time (no offset), meaning
-        "11am" in the USER'S timezone. We attach the user's timezone, then
-        convert to UTC for storage so reminders fire at the right absolute
-        instant and every device renders it in its own local time.
+        When the LLM returns `items` (multiple commitments in one message),
+        each is created. Otherwise the single text/due_at pair is used. An
+        item with empty text is skipped rather than failing the whole turn.
+
+        Returns the created records (may be empty if nothing was usable).
         """
-        text = (result.text or "").strip()
-        if not text:
-            # LLM classified as add_commitment but didn't give us a usable title.
-            # Don't fail the whole turn — just skip the create and use the reply.
-            logger.warning("add_commitment intent missing text; skipping create")
+        # Normalize to a list of (text, due_str) drafts.
+        if result.items:
+            drafts = [(d.text, d.due_at) for d in result.items]
+        elif result.text:
+            drafts = [(result.text, result.due_at)]
+        else:
+            logger.warning("add_commitment intent had no text/items; skipping create")
+            return []
+
+        created: list[CommitmentResponse] = []
+        for text_raw, due_raw in drafts:
+            text = (text_raw or "").strip()
+            if not text:
+                continue
+            payload = CommitmentCreate(text=text, due_at=self._parse_due_at(due_raw, user_tz))
+            created.append(self._service.create(user_id, payload))
+        return created
+
+    @staticmethod
+    def _parse_due_at(due_str: str | None, user_tz: ZoneInfo) -> datetime | None:
+        """
+        Convert an LLM-emitted due_at string to a tz-aware UTC datetime.
+
+        The LLM emits a naive wall-clock time (no offset), meaning the time in
+        the USER'S timezone. We attach the user's timezone, then convert to UTC
+        so reminders fire at the right absolute instant and every device renders
+        it in its own local time. Invalid values are dropped (returns None).
+        """
+        if not due_str:
             return None
-
-        due_at: datetime | None = None
-        if result.due_at:
-            try:
-                parsed = datetime.fromisoformat(result.due_at)
-                if parsed.tzinfo is None:
-                    # Naive => interpret as the user's wall clock, then to UTC.
-                    parsed = parsed.replace(tzinfo=user_tz)
-                due_at = parsed.astimezone(UTC)
-            except (ValueError, TypeError):
-                logger.warning(f"chat: invalid due_at dropped: {result.due_at!r}")
-
-        payload = CommitmentCreate(text=text, due_at=due_at)
-        return self._service.create(user_id, payload)
+        try:
+            parsed = datetime.fromisoformat(due_str)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=user_tz)
+            return parsed.astimezone(UTC)
+        except (ValueError, TypeError):
+            logger.warning(f"chat: invalid due_at dropped: {due_str!r}")
+            return None

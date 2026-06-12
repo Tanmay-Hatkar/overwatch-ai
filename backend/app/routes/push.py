@@ -31,6 +31,7 @@ from app.models.user import UserResponse
 from app.repositories.push_subscription_repository import PushSubscriptionRepository
 from app.routes.auth import current_user
 from app.services.push_service import PushPayload, PushService
+from app.services.vapid_keys import derive_vapid_public_key
 
 router = APIRouter(prefix="/push", tags=["push"])
 
@@ -49,13 +50,21 @@ def get_push_service() -> PushService:
 
 @router.get("/vapid-public-key", response_model=VapidPublicKeyResponse)
 def get_vapid_public_key() -> VapidPublicKeyResponse:
-    """Return the VAPID public key for the frontend to subscribe with."""
-    if not settings.vapid_public_key:
+    """
+    Return the VAPID public key for the frontend to subscribe with.
+
+    The key is DERIVED from the private key (the single source of truth), so
+    it's always guaranteed to match — no separate VAPID_PUBLIC_KEY to keep in
+    sync. If no private key is configured, fall back to an explicitly-set
+    public key, else 503.
+    """
+    key = derive_vapid_public_key(settings.vapid_private_key) or settings.vapid_public_key
+    if not key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="VAPID_PUBLIC_KEY is not configured on the server.",
+            detail="VAPID is not configured on the server.",
         )
-    return VapidPublicKeyResponse(public_key=settings.vapid_public_key)
+    return VapidPublicKeyResponse(public_key=key)
 
 
 @router.post(

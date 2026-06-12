@@ -15,15 +15,34 @@ PATCH_VAPID_PUBLIC = "app.routes.push.settings"
 PATCH_PUSH_SERVICE = "app.routes.push._push_service"
 
 
-def test_vapid_public_key_returns_configured_value(authed_client: TestClient, monkeypatch) -> None:
-    """Endpoint returns the public key from settings."""
-    monkeypatch.setattr("app.routes.push.settings.vapid_public_key", "PUBKEY123")
+def test_vapid_public_key_is_derived_from_private_key(authed_client: TestClient, monkeypatch) -> None:
+    """The endpoint derives the public key from the private key (always matches)."""
+    # A known VAPID private key + its corresponding public key.
+    priv = "uY-G_GTYxbuKuSTWc8EAt_nj2RlgiBeSeqNVy16ke_g"
+    expected_pub = (
+        "BGY5XeF-SVJstLlSTnm1nOLIjGNU6U-a4m8Riir9jBM2KRFmckxw6n0PJmc8Y7M-DyB3Hl9Oav44u7E84gQthdE"
+    )
+    monkeypatch.setattr("app.routes.push.settings.vapid_private_key", priv)
+    monkeypatch.setattr("app.routes.push.settings.vapid_public_key", "ignored-stale-value")
     response = authed_client.get("/push/vapid-public-key")
     assert response.status_code == 200
-    assert response.json() == {"public_key": "PUBKEY123"}
+    # Derived from the private key — the stale public override is ignored.
+    assert response.json() == {"public_key": expected_pub}
+
+
+def test_vapid_public_key_falls_back_to_explicit_when_no_private_key(
+    authed_client: TestClient, monkeypatch
+) -> None:
+    """With no private key, the explicit public key field is used."""
+    monkeypatch.setattr("app.routes.push.settings.vapid_private_key", "")
+    monkeypatch.setattr("app.routes.push.settings.vapid_public_key", "EXPLICIT_PUB")
+    response = authed_client.get("/push/vapid-public-key")
+    assert response.status_code == 200
+    assert response.json() == {"public_key": "EXPLICIT_PUB"}
 
 
 def test_vapid_public_key_returns_503_when_unconfigured(authed_client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr("app.routes.push.settings.vapid_private_key", "")
     monkeypatch.setattr("app.routes.push.settings.vapid_public_key", "")
     response = authed_client.get("/push/vapid-public-key")
     assert response.status_code == 503

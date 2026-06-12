@@ -44,9 +44,11 @@ export function AuthProvider({ children }) {
     try {
       const u = await getCurrentUser()
       setUser(u)
-    } catch (err) {
-      // Network error or 5xx — surface but don't crash the app
-      setError(err.message)
+    } catch {
+      // The background "am I signed in?" check failed (e.g. a flaky network).
+      // This is NOT an actionable sign-in error — just show the clean login
+      // screen. We deliberately do NOT surface "Failed to fetch" here; real
+      // errors come from the OAuth callback (?auth_error) or the login() flow.
       setUser(null)
     } finally {
       setLoading(false)

@@ -95,13 +95,20 @@ app = FastAPI(
 )
 
 # CORS — the frontend (Vercel) calls the backend (Railway) from a different
-# origin in production, so the browser enforces preflight checks. We allow
-# only the origins listed in CORS_ORIGINS (comma-separated env var). Cookies
-# carry the session, so allow_credentials must be True; that means we can't
-# use the "*" wildcard for origins.
+# origin in production, so the browser enforces preflight checks. We allow the
+# origins listed in CORS_ORIGINS (comma-separated env var) PLUS the fixed
+# origins the Capacitor native app serves its webview from. The native app
+# uses bearer-token auth (no cookies), but its fetches are still cross-origin
+# to the backend, so its origin must be allowed. allow_credentials stays True
+# for the cookie-based web client, so no "*" wildcard.
+_CAPACITOR_ORIGINS = [
+    "https://localhost",      # Android (androidScheme: https, the default)
+    "http://localhost",       # Android (androidScheme: http)
+    "capacitor://localhost",  # iOS
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origin_list(),
+    allow_origins=cors_origin_list() + _CAPACITOR_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],

@@ -10,8 +10,15 @@ import time with a clear validation error. This is better than crashing
 mid-request later.
 """
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The VAPID PUBLIC key is public by design (served at /push/vapid-public-key
+# and embedded in every browser subscription). Kept as a constant so the app
+# is resilient to a misconfigured hosting env var — see the validator below.
+_DEFAULT_VAPID_PUBLIC_KEY = (
+    "BGY5XeF-SVJstLlSTnm1nOLIjGNU6U-a4m8Riir9jBM2KRFmckxw6n0PJmc8Y7M-DyB3Hl9Oav44u7E84gQthdE"
+)
 
 
 class Settings(BaseSettings):
@@ -41,13 +48,26 @@ class Settings(BaseSettings):
     # =========================================================================
     # The VAPID PUBLIC key is not a secret — it's served at /push/vapid-public-key
     # and embedded in every browser subscription. Defaulting it here makes push
-    # work without depending on a (historically flaky) hosting env var. An env
-    # var still overrides it if set. The PRIVATE key below stays env-only.
+    # work without depending on a (historically flaky) hosting env var.
     vapid_public_key: str = Field(
-        default="BGY5XeF-SVJstLlSTnm1nOLIjGNU6U-a4m8Riir9jBM2KRFmckxw6n0PJmc8Y7M-DyB3Hl9Oav44u7E84gQthdE",
+        default=_DEFAULT_VAPID_PUBLIC_KEY,
         description="VAPID public key (base64url). Public by design; safe to default.",
     )
     vapid_private_key: str = Field(default="", description="VAPID private key (base64url, secret)")
+
+    @field_validator("vapid_public_key")
+    @classmethod
+    def _coerce_valid_vapid_public_key(cls, v: str) -> str:
+        """
+        Guard against a misconfigured VAPID_PUBLIC_KEY env var.
+
+        A real VAPID public key is an 87-char base64url string. If the
+        configured value (e.g. a stale hosting env var holding a mailto:
+        subject) doesn't look like one, fall back to the known-good key so
+        push keeps working regardless of the environment. This is safe
+        because the public key is public by design.
+        """
+        return v if len(v) >= 80 else _DEFAULT_VAPID_PUBLIC_KEY
     vapid_subject: str = Field(
         default="mailto:admin@example.com",
         description="VAPID subject (mailto: URL identifying the app)",

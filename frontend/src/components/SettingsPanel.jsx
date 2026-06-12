@@ -17,6 +17,8 @@ export default function SettingsPanel({ open, onClose }) {
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
   )
   const [proactiveVoice, setProactiveVoice] = useState(() => isProactiveVoiceEnabled())
+  const [testResult, setTestResult] = useState(null)
+  const [testing, setTesting] = useState(false)
 
   function toggleProactiveVoice() {
     const next = !proactiveVoice
@@ -25,8 +27,17 @@ export default function SettingsPanel({ open, onClose }) {
   }
 
   async function handleTestReminder() {
-    const msg = await sendTestNotification()
-    toast.message(msg)
+    setTesting(true)
+    setTestResult('Working…')
+    try {
+      const msg = await sendTestNotification()
+      setTestResult(msg)
+      toast.message(msg) // also toast, for whoever can see it
+    } catch (e) {
+      setTestResult(`Error: ${e?.message || e}`)
+    } finally {
+      setTesting(false)
+    }
   }
 
   // Re-read permission state whenever the panel opens (in case the user
@@ -90,14 +101,22 @@ export default function SettingsPanel({ open, onClose }) {
             />
             <button
               onClick={handleTestReminder}
-              className="mt-3 w-full px-4 py-2 bg-[#1a1a1a] border border-[#2a2a2a] hover:border-orange-500/50 text-zinc-200 rounded-lg text-sm transition-colors"
+              disabled={testing}
+              className="mt-3 w-full px-4 py-2 bg-[#1a1a1a] border border-[#2a2a2a] hover:border-orange-500/50 disabled:opacity-50 text-zinc-200 rounded-lg text-sm transition-colors"
             >
-              Send a test reminder (~8s)
+              {testing ? 'Testing…' : 'Send a test reminder (~8s)'}
             </button>
+
+            {/* Inline result — impossible to miss (unlike a toast that can hide
+                behind the chat bar on mobile). This is the diagnostic. */}
+            {testResult && (
+              <p className="mt-3 text-sm text-orange-200 bg-orange-500/[0.06] border border-orange-500/30 rounded-lg p-3 break-words">
+                {testResult}
+              </p>
+            )}
+
             <p className="text-xs text-zinc-600 mt-2">
-              {notificationsAreNative()
-                ? 'Fires an on-device alarm in 8 seconds — lock your phone to confirm it works in the background.'
-                : 'On-device alarms only run in the installed Android app. In the browser, reminders use web push.'}
+              Running in: <span className="text-zinc-400">{notificationsAreNative() ? 'native app ✓' : 'browser (alarms use web push, not local)'}</span>
             </p>
           </section>
 

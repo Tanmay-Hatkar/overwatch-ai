@@ -20,7 +20,29 @@ import { isNative } from './native'
 import { updateCommitment } from '../api'
 
 const ACTION_TYPE = 'COMMITMENT_REMINDER'
+const CHANNEL_ID = 'reminders'
 const SNOOZE_MINUTES = 10
+
+/**
+ * Create the high-importance Android notification channel reminders use.
+ * Without an explicit HIGH channel, Android may show reminders silently or
+ * not as a heads-up. Idempotent; Android-only (no-op elsewhere).
+ */
+async function ensureChannel() {
+  if (!isNative()) return
+  try {
+    await LocalNotifications.createChannel({
+      id: CHANNEL_ID,
+      name: 'Reminders',
+      description: 'Commitment reminders and alarms',
+      importance: 5, // HIGH — heads-up with sound
+      visibility: 1, // public on lock screen
+      vibration: true,
+    })
+  } catch {
+    // createChannel is Android-only; ignore on iOS / if unavailable
+  }
+}
 
 /** Derive a stable 31-bit integer id from a commitment UUID (plugin needs int ids). */
 function notifId(uuid) {
@@ -56,24 +78,30 @@ export async function sendTestNotification() {
   if (!isNative()) {
     return 'Test alarms only work in the installed Android app, not the browser.'
   }
+  if (!LocalNotifications || typeof LocalNotifications.schedule !== 'function') {
+    return 'Notifications plugin missing — do a clean rebuild in Android Studio.'
+  }
   try {
     const granted = await ensureNotificationPermission()
-    if (!granted) return 'Notification permission is off — enable it for Overwatch in Android settings.'
+    if (!granted) {
+      return 'Permission is OFF. Android settings → Apps → Overwatch → Notifications → allow.'
+    }
+    await ensureChannel()
+    // Deliberately minimal (no action types) so this isolates the core path.
     await LocalNotifications.schedule({
       notifications: [
         {
           id: 999000,
           title: 'Overwatch — test',
-          body: 'If you see this, alarms work. Try Snooze.',
+          body: 'If you see this, alarms work.',
+          channelId: CHANNEL_ID,
           schedule: { at: new Date(Date.now() + 8000), allowWhileIdle: true },
-          actionTypeId: ACTION_TYPE,
-          extra: { text: 'the test reminder' },
         },
       ],
     })
-    return 'Test reminder scheduled — lock your phone, it fires in ~8 seconds.'
+    return 'Scheduled ✓ — lock your phone, it fires in ~8s. (No popup = exact-alarm setting.)'
   } catch (e) {
-    return `Could not schedule: ${e?.message || e}`
+    return `Schedule failed: ${e?.message || e}`
   }
 }
 
@@ -84,6 +112,7 @@ export async function sendTestNotification() {
 export async function initNotificationActions() {
   if (!isNative()) return
   try {
+    await ensureChannel()
     await LocalNotifications.registerActionTypes({
       types: [
         {
@@ -163,6 +192,7 @@ export async function syncCommitmentReminders(commitments) {
         id: notifId(c.id),
         title: 'Overwatch',
         body: `Time to start: ${c.text}`,
+        channelId: CHANNEL_ID,
         schedule: { at: new Date(c.due_at), allowWhileIdle: true },
         actionTypeId: ACTION_TYPE,
         extra: { commitmentId: c.id, text: c.text },

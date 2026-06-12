@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
+import { toast } from 'sonner'
 import { getSetting, setSetting, POLL_INTERVAL_PRESETS } from '../lib/settings'
+import { sendTestNotification, notificationsAreNative } from '../lib/notifications'
+import { isProactiveVoiceEnabled, setProactiveVoiceEnabled } from '../lib/proactiveVoice'
 
 /**
  * SettingsPanel — modal-ish overlay with user preferences.
@@ -13,6 +16,18 @@ export default function SettingsPanel({ open, onClose }) {
   const [permission, setPermission] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
   )
+  const [proactiveVoice, setProactiveVoice] = useState(() => isProactiveVoiceEnabled())
+
+  function toggleProactiveVoice() {
+    const next = !proactiveVoice
+    setProactiveVoice(next)
+    setProactiveVoiceEnabled(next)
+  }
+
+  async function handleTestReminder() {
+    const msg = await sendTestNotification()
+    toast.message(msg)
+  }
 
   // Re-read permission state whenever the panel opens (in case the user
   // toggled it elsewhere).
@@ -73,6 +88,41 @@ export default function SettingsPanel({ open, onClose }) {
               permission={permission}
               onRequest={requestNotificationPermission}
             />
+            <button
+              onClick={handleTestReminder}
+              className="mt-3 w-full px-4 py-2 bg-[#1a1a1a] border border-[#2a2a2a] hover:border-orange-500/50 text-zinc-200 rounded-lg text-sm transition-colors"
+            >
+              Send a test reminder (~8s)
+            </button>
+            <p className="text-xs text-zinc-600 mt-2">
+              {notificationsAreNative()
+                ? 'Fires an on-device alarm in 8 seconds — lock your phone to confirm it works in the background.'
+                : 'On-device alarms only run in the installed Android app. In the browser, reminders use web push.'}
+            </p>
+          </section>
+
+          {/* Proactive voice */}
+          <section>
+            <h3 className="text-[10px] font-semibold tracking-[0.15em] uppercase text-zinc-600 mb-2">
+              Proactive voice
+            </h3>
+            <button
+              onClick={toggleProactiveVoice}
+              className={`w-full flex items-center justify-between px-4 py-2 rounded-lg text-sm transition-colors border ${
+                proactiveVoice
+                  ? 'bg-orange-500/[0.08] border-orange-500/40 text-orange-200'
+                  : 'bg-[#1a1a1a] border-[#2a2a2a] text-zinc-300 hover:border-[#3a3a3a]'
+              }`}
+            >
+              <span>Speak my pending items when I open the app</span>
+              <span className="text-xs font-semibold uppercase tracking-wider">
+                {proactiveVoice ? 'On' : 'Off'}
+              </span>
+            </button>
+            <p className="text-xs text-zinc-600 mt-2">
+              When on, Overwatch greets you out loud with what's overdue and
+              what's next.
+            </p>
           </section>
 
           {/* Polling interval */}

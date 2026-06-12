@@ -42,6 +42,41 @@ export async function ensureNotificationPermission() {
   }
 }
 
+/** True only inside the native app (where local-notification alarms work). */
+export function notificationsAreNative() {
+  return isNative()
+}
+
+/**
+ * Fire a test reminder ~8 seconds from now so the user can verify the native
+ * alarm pipeline (permission + scheduling) without waiting for a real due time.
+ * Returns a short status string for the UI.
+ */
+export async function sendTestNotification() {
+  if (!isNative()) {
+    return 'Test alarms only work in the installed Android app, not the browser.'
+  }
+  try {
+    const granted = await ensureNotificationPermission()
+    if (!granted) return 'Notification permission is off — enable it for Overwatch in Android settings.'
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: 999000,
+          title: 'Overwatch — test',
+          body: 'If you see this, alarms work. Try Snooze.',
+          schedule: { at: new Date(Date.now() + 8000), allowWhileIdle: true },
+          actionTypeId: ACTION_TYPE,
+          extra: { text: 'the test reminder' },
+        },
+      ],
+    })
+    return 'Test reminder scheduled — lock your phone, it fires in ~8 seconds.'
+  } catch (e) {
+    return `Could not schedule: ${e?.message || e}`
+  }
+}
+
 /**
  * Register the Snooze/Done actions and the handler that reacts to them.
  * Call once at app init (after sign-in).

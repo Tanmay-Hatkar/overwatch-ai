@@ -18,6 +18,8 @@ import {
   ensureNotificationPermission,
   syncCommitmentReminders,
 } from './lib/notifications'
+import { buildProactiveSummary, isProactiveVoiceEnabled } from './lib/proactiveVoice'
+import { speak } from './lib/speech'
 import './App.css'
 
 /**
@@ -118,6 +120,20 @@ function Overwatch() {
   useEffect(() => {
     syncCommitmentReminders(commitments)
   }, [commitments])
+
+  // Proactive voice: once per app session, after commitments first load, speak
+  // a short summary of what's overdue / next — if the user enabled it.
+  const spokeProactivelyRef = useRef(false)
+  useEffect(() => {
+    if (loading || spokeProactivelyRef.current) return
+    if (!isProactiveVoiceEnabled()) return
+    const summary = buildProactiveSummary(commitments)
+    if (summary) {
+      spokeProactivelyRef.current = true
+      // Small delay so it doesn't talk over the page settling.
+      setTimeout(() => speak(summary), 600)
+    }
+  }, [loading, commitments])
 
   // After the Google Calendar OAuth flow, the backend redirects back here
   // with ?calendar=<status>. Surface it as a toast, refresh so the calendar

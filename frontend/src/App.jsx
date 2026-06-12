@@ -136,7 +136,12 @@ function Overwatch() {
           so content behind the chat is always reachable on any viewport. */}
       <div
         className="ow-fade-in w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-8"
-        style={{ paddingBottom: `${chatBarHeight + 32}px` }}
+        style={{
+          // Add the device's top safe-area inset so the header clears the
+          // status bar on native (Capacitor) / standalone PWA fullscreen.
+          paddingTop: 'calc(2rem + env(safe-area-inset-top))',
+          paddingBottom: `${chatBarHeight + 32}px`,
+        }}
       >
         <header className="mb-6 flex items-start justify-between">
           <div>

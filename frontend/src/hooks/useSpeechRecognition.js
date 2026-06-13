@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRecognizer, isSpeechRecognitionSupported } from '../lib/speech'
+import { createNativeRecognizer, isNativeSpeechSupported } from '../lib/nativeSpeech'
 
 /**
  * useSpeechRecognition — React wrapper over the speech recognizer.
@@ -18,7 +19,10 @@ import { createRecognizer, isSpeechRecognitionSupported } from '../lib/speech'
  *   into an input field — fired from a recognition event, not a render effect.
  */
 export function useSpeechRecognition({ onResult } = {}) {
-  const supported = isSpeechRecognitionSupported()
+  // Native app → use the device's speech engine (the WebView's built-in one
+  // doesn't work). Web → use the browser's Web Speech API.
+  const native = isNativeSpeechSupported()
+  const supported = native || isSpeechRecognitionSupported()
   const [listening, setListening] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [error, setError] = useState(null)
@@ -32,7 +36,8 @@ export function useSpeechRecognition({ onResult } = {}) {
   // Build the recognizer once. Its callbacks drive our state.
   useEffect(() => {
     if (!supported) return
-    recognizerRef.current = createRecognizer({
+    const factory = native ? createNativeRecognizer : createRecognizer
+    recognizerRef.current = factory({
       onResult: (text, isFinal) => {
         setTranscript(text)
         onResultRef.current?.(text, isFinal)
@@ -44,7 +49,7 @@ export function useSpeechRecognition({ onResult } = {}) {
       onEnd: () => setListening(false),
     })
     return () => recognizerRef.current?.abort()
-  }, [supported])
+  }, [supported, native])
 
   const start = useCallback(() => {
     if (!recognizerRef.current || listening) return

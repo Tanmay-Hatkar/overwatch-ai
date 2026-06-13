@@ -55,4 +55,14 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Voice input (native speech recognition) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Allow querying the device speech-recognition service (Android 11+) -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 </manifest>

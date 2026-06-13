@@ -265,6 +265,11 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit, onReschedule }
             title={isDone ? '' : 'Click to edit'}
           >
             {commitment.text}
+            {commitment.recurrence && commitment.recurrence !== 'none' && (
+              <span className="ml-2 inline-flex items-center gap-0.5 align-middle text-[9px] font-semibold uppercase tracking-wider text-orange-300 bg-orange-500/[0.1] border border-orange-500/30 rounded px-1 py-0.5">
+                ↻ {commitment.recurrence}
+              </span>
+            )}
           </p>
         )}
         {/* Due time row — click to reschedule. Open commitments only.

@@ -42,6 +42,9 @@ SYSTEM_PROMPT = (
     "     For a SINGLE commitment, extract:\n"
     "       text: imperative, concise (≤80 chars)\n"
     "       due_at: ISO 8601 'YYYY-MM-DDTHH:MM:SS' if a date/time is implied, else null\n"
+    "       recurrence: 'daily' if it repeats every day, 'weekly' if every week,\n"
+    "         else 'none'. Phrases like 'every day', 'each morning', 'daily',\n"
+    "         'my routine' => daily; 'every week', 'weekly', 'every Monday' => weekly.\n"
     "     For MULTIPLE distinct commitments in one message (a list, comma- or\n"
     "     'and'-separated), set \"items\" to an array of {\"text\", \"due_at\"} objects —\n"
     "     one per commitment — and leave the top-level text/due_at null. Each item\n"
@@ -75,8 +78,8 @@ SYSTEM_PROMPT = (
     "Reply with ONLY valid JSON. No markdown, no commentary outside the JSON.\n"
     "\n"
     "Format:\n"
-    '  single add: {"intent": "add_commitment", "text": "...", "due_at": "YYYY-MM-DDTHH:MM:SS" | null, "reply": "..."}\n'
-    '  multi  add: {"intent": "add_commitment", "items": [{"text": "...", "due_at": "..." | null}, ...], "reply": "..."}\n'
+    '  single add: {"intent": "add_commitment", "text": "...", "due_at": "YYYY-MM-DDTHH:MM:SS" | null, "recurrence": "none"|"daily"|"weekly", "reply": "..."}\n'
+    '  multi  add: {"intent": "add_commitment", "items": [{"text": "...", "due_at": "..." | null, "recurrence": "none"|"daily"|"weekly"}, ...], "reply": "..."}\n'
     '  query:      {"intent": "query",          "text": null,  "due_at": null, "reply": "..."}\n'
     '  clarify:    {"intent": "clarify",        "text": null,  "due_at": null, "reply": "<your question>"}\n'
     '  general:    {"intent": "general",        "text": null,  "due_at": null, "reply": "..."}\n'
@@ -112,6 +115,9 @@ SYSTEM_PROMPT = (
     "\n"
     "User: \"add a team meeting tomorrow\"\n"
     "Output: {\"intent\": \"clarify\", \"text\": null, \"due_at\": null, \"reply\": \"Sure — what time, and how long should I block?\"}\n"
+    "\n"
+    "User: \"start my night routine every day at 11pm\" (today is Mon 2026-05-12)\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Start night routine\", \"due_at\": \"2026-05-12T23:00:00\", \"recurrence\": \"daily\", \"reply\": \"Got it — night routine at 11pm, every day.\"}\n"
     "\n"
     "User: \"I need to renew my passport, book a dentist appointment, and email the landlord\"\n"
     "Output: {\"intent\": \"add_commitment\", \"items\": [{\"text\": \"Renew passport\", \"due_at\": null}, {\"text\": \"Book dentist appointment\", \"due_at\": null}, {\"text\": \"Email the landlord\", \"due_at\": null}], \"reply\": \"Added 3 things to your list.\"}\n"

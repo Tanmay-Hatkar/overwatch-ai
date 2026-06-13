@@ -13,7 +13,7 @@ import sqlite3
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from app.models.commitment import CommitmentResponse, CommitmentStatus
+from app.models.commitment import CommitmentResponse, CommitmentStatus, Recurrence
 
 
 class CommitmentRepository:
@@ -28,7 +28,11 @@ class CommitmentRepository:
         self._conn = conn
 
     def create(
-        self, user_id: UUID, text: str, due_at: datetime | None
+        self,
+        user_id: UUID,
+        text: str,
+        due_at: datetime | None,
+        recurrence: str = "none",
     ) -> CommitmentResponse:
         """
         Insert a new commitment owned by user_id.
@@ -37,6 +41,7 @@ class CommitmentRepository:
             user_id: Owner of the commitment.
             text: The commitment statement.
             due_at: Optional due timestamp.
+            recurrence: 'none' | 'daily' | 'weekly'.
 
         Returns:
             The newly created commitment.
@@ -48,10 +53,10 @@ class CommitmentRepository:
 
         self._conn.execute(
             """
-            INSERT INTO commitments (id, user_id, text, due_at, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO commitments (id, user_id, text, due_at, status, recurrence, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id, str(user_id), text, due_at_str, status, now, now),
+            (new_id, str(user_id), text, due_at_str, status, recurrence, now, now),
         )
         self._conn.commit()
 
@@ -101,6 +106,7 @@ class CommitmentRepository:
         text: str | None = None,
         due_at: datetime | None = None,
         status: CommitmentStatus | None = None,
+        recurrence: str | None = None,
     ) -> CommitmentResponse | None:
         """
         Partial update of a commitment, scoped to its owner.
@@ -122,6 +128,8 @@ class CommitmentRepository:
             updates["due_at"] = due_at.isoformat()
         if status is not None:
             updates["status"] = status.value
+        if recurrence is not None:
+            updates["recurrence"] = recurrence
 
         if not updates:
             return existing
@@ -180,6 +188,10 @@ class CommitmentRepository:
     @staticmethod
     def _row_to_response(row: sqlite3.Row) -> CommitmentResponse:
         """Convert a sqlite3.Row to a CommitmentResponse."""
+        # `recurrence` was added in migration 006; older rows may predate it in
+        # a raw row mapping, so default safely to 'none'.
+        keys = row.keys()
+        recurrence = row["recurrence"] if "recurrence" in keys else "none"
         return CommitmentResponse(
             id=UUID(row["id"]),
             text=row["text"],
@@ -189,6 +201,7 @@ class CommitmentRepository:
                 else None
             ),
             status=CommitmentStatus(row["status"]),
+            recurrence=Recurrence(recurrence or "none"),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )

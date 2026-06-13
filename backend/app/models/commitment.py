@@ -32,6 +32,14 @@ class CommitmentStatus(str, Enum):
     ABANDONED = "abandoned"
 
 
+class Recurrence(str, Enum):
+    """How often a commitment repeats. NONE = a one-off."""
+
+    NONE = "none"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+
+
 class CommitmentBase(BaseModel):
     """
     Fields shared between input and output schemas.
@@ -49,6 +57,10 @@ class CommitmentBase(BaseModel):
     due_at: datetime | None = Field(
         default=None,
         description="Optional timestamp for when the commitment is due.",
+    )
+    recurrence: Recurrence = Field(
+        default=Recurrence.NONE,
+        description="How often it repeats. When completed, a recurring item rolls forward.",
     )
 
 
@@ -76,6 +88,7 @@ class CommitmentUpdate(BaseModel):
     text: str | None = Field(default=None, min_length=1, max_length=500)
     due_at: datetime | None = None
     status: CommitmentStatus | None = None
+    recurrence: Recurrence | None = None
 
 
 class CommitmentResponse(CommitmentBase):

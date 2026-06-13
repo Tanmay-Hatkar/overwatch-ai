@@ -14,10 +14,48 @@ from app.models.commitment import (
     CommitmentCreate,
     CommitmentStatus,
     CommitmentUpdate,
+    Recurrence,
 )
 from app.services.commitment_service import CommitmentService
 
 UID = uuid4()  # stands in for the signed-in user across these tests
+
+
+# ---------------------------------------------------------------------------
+# recurrence
+# ---------------------------------------------------------------------------
+
+
+def test_completing_a_daily_recurring_commitment_rolls_it_forward(
+    service: CommitmentService,
+) -> None:
+    """Marking a daily routine done keeps it OPEN and advances due_at to tomorrow."""
+    due = datetime.now(UTC) - timedelta(hours=1)  # already due (e.g. tonight's slot)
+    created = service.create(
+        UID, CommitmentCreate(text="Night routine", due_at=due, recurrence=Recurrence.DAILY)
+    )
+
+    updated = service.update(UID, created.id, CommitmentUpdate(status=CommitmentStatus.DONE))
+
+    assert updated is not None
+    # Did NOT close — it rolled forward and stays open for the next occurrence.
+    assert updated.status == CommitmentStatus.OPEN
+    assert updated.recurrence == Recurrence.DAILY
+    assert updated.due_at is not None
+    assert updated.due_at > datetime.now(UTC)              # in the future
+    assert updated.due_at.hour == due.hour                 # same time of day
+
+
+def test_completing_a_non_recurring_commitment_closes_it(
+    service: CommitmentService,
+) -> None:
+    """A one-off (recurrence=none) marked done is actually closed."""
+    created = service.create(
+        UID, CommitmentCreate(text="Pay rent", due_at=datetime.now(UTC) + timedelta(hours=1))
+    )
+    updated = service.update(UID, created.id, CommitmentUpdate(status=CommitmentStatus.DONE))
+    assert updated is not None
+    assert updated.status == CommitmentStatus.DONE
 
 
 # ---------------------------------------------------------------------------

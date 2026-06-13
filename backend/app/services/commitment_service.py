@@ -7,7 +7,7 @@ so all data access is scoped to the signed-in user (slice 12).
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.models.commitment import (
@@ -15,6 +15,7 @@ from app.models.commitment import (
     CommitmentResponse,
     CommitmentStatus,
     CommitmentUpdate,
+    Recurrence,
 )
 from app.repositories.commitment_repository import CommitmentRepository
 
@@ -30,7 +31,12 @@ class CommitmentService:
     def create(self, user_id: UUID, payload: CommitmentCreate) -> CommitmentResponse:
         """Create a new commitment owned by user_id."""
         logger.info("Creating commitment for user %s: %r", user_id, payload.text[:50])
-        return self._repo.create(user_id=user_id, text=payload.text, due_at=payload.due_at)
+        return self._repo.create(
+            user_id=user_id,
+            text=payload.text,
+            due_at=payload.due_at,
+            recurrence=payload.recurrence.value,
+        )
 
     def get(self, user_id: UUID, commitment_id: UUID) -> CommitmentResponse | None:
         """Fetch a commitment by id, scoped to its owner."""
@@ -54,13 +60,51 @@ class CommitmentService:
         (new text), or mark done (new status).
         """
         logger.info("Updating commitment %s (user %s)", commitment_id, user_id)
+
+        # Completing a RECURRING commitment doesn't close it — it rolls forward
+        # to the next occurrence and stays open. So a daily routine reappears
+        # tomorrow instead of vanishing when you tick it off tonight.
+        if payload.status == CommitmentStatus.DONE:
+            existing = self._repo.get(user_id, commitment_id)
+            if (
+                existing is not None
+                and existing.recurrence != Recurrence.NONE
+                and existing.due_at is not None
+            ):
+                next_due = self._next_occurrence(existing.due_at, existing.recurrence)
+                logger.info(
+                    "Recurring commitment %s rolled forward to %s", commitment_id, next_due
+                )
+                return self._repo.update(
+                    user_id,
+                    commitment_id,
+                    due_at=next_due,
+                    status=CommitmentStatus.OPEN,
+                )
+
         return self._repo.update(
             user_id,
             commitment_id,
             text=payload.text,
             due_at=payload.due_at,
             status=payload.status,
+            recurrence=payload.recurrence.value if payload.recurrence is not None else None,
         )
+
+    @staticmethod
+    def _next_occurrence(due_at: datetime, recurrence: Recurrence) -> datetime:
+        """
+        The next future occurrence after `due_at` for a daily/weekly recurrence.
+
+        Advances by the period until the result is in the future, so a routine
+        that was overdue for several days still lands on its next real slot.
+        """
+        delta = timedelta(days=1) if recurrence == Recurrence.DAILY else timedelta(days=7)
+        nxt = due_at + delta
+        now = datetime.now(UTC)
+        while nxt <= now:
+            nxt += delta
+        return nxt
 
     def latest_commitment_update(self, user_id: UUID) -> datetime | None:
         """Timestamp of this user's most recently updated commitment, or None."""

@@ -32,7 +32,12 @@ from app.models.chat import (
     ChatTurn,
     _ChatIntentResult,
 )
-from app.models.commitment import CommitmentCreate, CommitmentResponse, CommitmentStatus
+from app.models.commitment import (
+    CommitmentCreate,
+    CommitmentResponse,
+    CommitmentStatus,
+    Recurrence,
+)
 from app.prompts.chat import SYSTEM_PROMPT, USER_TEMPLATE
 from app.repositories.conversation_repository import ConversationRepository
 from app.services.calendar_service import CalendarService
@@ -251,23 +256,35 @@ class ChatService:
 
         Returns the created records (may be empty if nothing was usable).
         """
-        # Normalize to a list of (text, due_str) drafts.
+        # Normalize to a list of (text, due_str, recurrence) drafts.
         if result.items:
-            drafts = [(d.text, d.due_at) for d in result.items]
+            drafts = [(d.text, d.due_at, d.recurrence) for d in result.items]
         elif result.text:
-            drafts = [(result.text, result.due_at)]
+            drafts = [(result.text, result.due_at, result.recurrence)]
         else:
             logger.warning("add_commitment intent had no text/items; skipping create")
             return []
 
         created: list[CommitmentResponse] = []
-        for text_raw, due_raw in drafts:
+        for text_raw, due_raw, rec_raw in drafts:
             text = (text_raw or "").strip()
             if not text:
                 continue
-            payload = CommitmentCreate(text=text, due_at=self._parse_due_at(due_raw, user_tz))
+            payload = CommitmentCreate(
+                text=text,
+                due_at=self._parse_due_at(due_raw, user_tz),
+                recurrence=self._parse_recurrence(rec_raw),
+            )
             created.append(self._service.create(user_id, payload))
         return created
+
+    @staticmethod
+    def _parse_recurrence(value: str | None) -> Recurrence:
+        """Map the LLM's recurrence string to the enum; default to NONE."""
+        try:
+            return Recurrence(value) if value else Recurrence.NONE
+        except ValueError:
+            return Recurrence.NONE
 
     @staticmethod
     def _parse_due_at(due_str: str | None, user_tz: ZoneInfo) -> datetime | None:

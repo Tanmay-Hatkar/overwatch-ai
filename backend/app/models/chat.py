@@ -78,6 +78,7 @@ class CommitmentDraft(BaseModel):
 
     text: str
     due_at: str | None = None  # ISO 8601 datetime or null
+    recurrence: str | None = None  # 'daily' | 'weekly' | 'none' / null
 
 
 # Internal-only schema for what the LLM returns when classifying
@@ -85,9 +86,10 @@ class _ChatIntentResult(BaseModel):
     """Parsed structured output from the LLM's intent-classification call."""
 
     intent: ChatIntent
-    # For a SINGLE add_commitment, the LLM fills text + due_at.
+    # For a SINGLE add_commitment, the LLM fills text + due_at (+ recurrence).
     text: str | None = None
     due_at: str | None = None  # ISO 8601 datetime or null
+    recurrence: str | None = None  # 'daily' | 'weekly' | 'none' / null
     # For MULTIPLE commitments in one message, the LLM fills items instead.
     # When present (non-empty), it takes precedence over text/due_at.
     items: list[CommitmentDraft] | None = None

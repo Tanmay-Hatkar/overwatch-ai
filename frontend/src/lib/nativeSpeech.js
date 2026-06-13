@@ -6,6 +6,11 @@
  * device's real speech engine). This module exposes the SAME shape as
  * lib/speech.js's createRecognizer() — start/stop/abort + onResult/onError/
  * onEnd — so the hook can swap implementations transparently.
+ *
+ * Important: with partialResults=true the plugin's start() promise resolves
+ * IMMEDIATELY (right after listening begins), NOT when speech ends. So we
+ * detect the real end via the 'listeningState' event — otherwise the mic
+ * would shut off a fraction of a second after starting.
  */
 
 import { SpeechRecognition } from '@capacitor-community/speech-recognition'
@@ -26,52 +31,91 @@ export function isNativeSpeechSupported() {
  */
 export function createNativeRecognizer({ onResult, onError, onEnd }) {
   let partialListener = null
+  let stateListener = null
   let running = false
+  let lastText = ''
 
-  async function cleanup() {
-    running = false
-    if (partialListener) {
-      try {
-        await partialListener.remove()
-      } catch {
-        // ignore
+  async function removeListeners() {
+    for (const l of [partialListener, stateListener]) {
+      if (l) {
+        try {
+          await l.remove()
+        } catch {
+          // ignore
+        }
       }
-      partialListener = null
     }
+    partialListener = null
+    stateListener = null
+  }
+
+  async function finish() {
+    if (!running) return
+    running = false
+    // Emit whatever we last heard as the final transcript.
+    if (lastText) onResult?.(lastText, true)
+    await removeListeners()
     onEnd?.()
   }
 
   return {
     start: async () => {
       if (running) return
+      lastText = ''
       try {
+        // Make sure a recognizer exists on this device.
+        try {
+          const avail = await SpeechRecognition.available()
+          if (avail && avail.available === false) {
+            onError?.('not-supported')
+            return
+          }
+        } catch {
+          // older plugin versions may not implement available(); proceed
+        }
+
         const perm = await SpeechRecognition.requestPermissions()
         if (perm.speechRecognition !== 'granted') {
           onError?.('not-allowed')
           return
         }
+
         running = true
-        // Stream partial results into onResult as the user speaks.
+
         partialListener = await SpeechRecognition.addListener(
           'partialResults',
           (data) => {
-            const text = (data?.matches && data.matches[0]) || ''
-            if (text) onResult?.(text, false)
+            const text = (data && data.matches && data.matches[0]) || ''
+            if (text) {
+              lastText = text
+              onResult?.(text, false)
+            }
           },
         )
-        // start() resolves with final matches when recognition completes.
-        const result = await SpeechRecognition.start({
+
+        // The real "it stopped listening" signal — drives onEnd, so the
+        // mic button stays active while the user is actually speaking.
+        stateListener = await SpeechRecognition.addListener(
+          'listeningState',
+          (data) => {
+            if (data && data.status === 'stopped') {
+              finish()
+            }
+          },
+        )
+
+        // Resolves immediately with partialResults=true — do NOT finish here.
+        await SpeechRecognition.start({
           language: 'en-US',
           maxResults: 1,
           partialResults: true,
           popup: false,
         })
-        const finalText = (result?.matches && result.matches[0]) || ''
-        if (finalText) onResult?.(finalText, true)
-        await cleanup()
       } catch (e) {
         onError?.(e?.message || 'unknown')
-        await cleanup()
+        running = false
+        await removeListeners()
+        onEnd?.()
       }
     },
     stop: async () => {
@@ -80,15 +124,17 @@ export function createNativeRecognizer({ onResult, onError, onEnd }) {
       } catch {
         // ignore
       }
-      await cleanup()
+      await finish()
     },
     abort: async () => {
+      running = false
       try {
         await SpeechRecognition.stop()
       } catch {
         // ignore
       }
-      await cleanup()
+      await removeListeners()
+      onEnd?.()
     },
   }
 }

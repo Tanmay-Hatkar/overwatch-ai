@@ -19,6 +19,7 @@ from app.models.commitment import CommitmentResponse
 ChatIntent = Literal[
     "add_commitment",
     "query",
+    "clarify",   # needs more info before it can act — asks a question, creates nothing
     "general",
 ]
 

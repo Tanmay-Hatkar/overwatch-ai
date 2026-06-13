@@ -219,6 +219,23 @@ def test_query_intent_does_not_create_anything(chat_service: ChatService) -> Non
     assert "nothing" in result.reply.lower()
 
 
+def test_clarify_intent_creates_nothing(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """A clarify intent (missing/vague info) asks a question and persists nothing."""
+    fake = _llm_response(
+        "clarify",
+        reply="Sure — what time, and how long should I block?",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="add a team meeting tomorrow"))
+
+    assert result.intent == "clarify"
+    assert result.commitment is None
+    assert "?" in result.reply           # it's a question
+    assert service.list(UID) == []       # nothing junk was created
+
+
 def test_query_intent_prompt_includes_current_state(
     chat_service: ChatService, service: CommitmentService
 ) -> None:

@@ -62,6 +62,17 @@ class CommitmentBase(BaseModel):
         default=Recurrence.NONE,
         description="How often it repeats. When completed, a recurring item rolls forward.",
     )
+    reminder_lead_minutes: int = Field(
+        default=0,
+        ge=0,
+        le=1440,  # at most 24h before
+        description=(
+            "How many minutes BEFORE due_at to nudge. 0 = fire exactly at the "
+            "time (an alarm, e.g. 'wake me at 2pm'). >0 = a heads-up that many "
+            "minutes before (e.g. a meeting). Set by the user's phrasing; "
+            "editable per item."
+        ),
+    )
 
 
 class CommitmentCreate(CommitmentBase):
@@ -89,6 +100,7 @@ class CommitmentUpdate(BaseModel):
     due_at: datetime | None = None
     status: CommitmentStatus | None = None
     recurrence: Recurrence | None = None
+    reminder_lead_minutes: int | None = Field(default=None, ge=0, le=1440)
 
 
 class CommitmentResponse(CommitmentBase):

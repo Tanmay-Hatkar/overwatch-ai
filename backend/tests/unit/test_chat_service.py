@@ -43,6 +43,37 @@ def _llm_response(intent: str, **fields) -> str:
 # ---------------------------------------------------------------------------
 
 
+def test_reminder_lead_minutes_threaded_from_llm(chat_service: ChatService) -> None:
+    """A heads-up lead (e.g. a meeting) flows from the LLM onto the commitment."""
+    fake = _llm_response(
+        "add_commitment",
+        text="Client meeting",
+        due_at="2026-06-04T14:00:00",
+        reminder_lead_minutes=15,
+        reply="Got it — heads-up 15 min before.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="client meeting at 2pm"))
+
+    assert result.commitment is not None
+    assert result.commitment.reminder_lead_minutes == 15
+
+
+def test_reminder_lead_defaults_to_zero_for_alarms(chat_service: ChatService) -> None:
+    """An alarm-style commitment (no lead given) stays at 0 = fire exactly at time."""
+    fake = _llm_response(
+        "add_commitment",
+        text="Wake up",
+        due_at="2026-06-04T06:30:00",
+        reply="Alarm set.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="wake me at 6:30"))
+
+    assert result.commitment is not None
+    assert result.commitment.reminder_lead_minutes == 0
+
+
 def test_add_commitment_creates_record_and_returns_it(chat_service: ChatService) -> None:
     """add_commitment intent persists the commitment and includes it in the response."""
     fake = _llm_response(

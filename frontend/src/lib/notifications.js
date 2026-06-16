@@ -163,12 +163,24 @@ export async function initNotificationActions() {
   }
 }
 
+/** Humanize a lead time for the notification body ("15 min", "1 hr"). */
+function humanizeLead(minutes) {
+  if (minutes >= 60 && minutes % 60 === 0) {
+    const h = minutes / 60
+    return `${h} hr`
+  }
+  return `${minutes} min`
+}
+
 /**
  * Reconcile scheduled reminders with the current commitments.
  *
  * Cancels everything previously scheduled, then schedules one reminder per
- * OPEN commitment whose due time is in the future. Call whenever the
- * commitments list loads or changes, so the OS schedule always matches reality.
+ * OPEN commitment with a due time. Each fires at (due_at − reminder_lead_minutes):
+ *   - lead 0  → exactly at the due time (an alarm: "Time to start: X")
+ *   - lead >0 → a heads-up that many minutes before ("In 15 min: X")
+ * Call whenever the commitments list loads or changes so the OS schedule
+ * always matches reality.
  */
 export async function syncCommitmentReminders(commitments) {
   if (!isNative()) return
@@ -182,18 +194,20 @@ export async function syncCommitmentReminders(commitments) {
 
     const now = Date.now()
     const toSchedule = commitments
-      .filter(
-        (c) =>
-          c.status === 'open' &&
-          c.due_at &&
-          new Date(c.due_at).getTime() > now,
-      )
-      .map((c) => ({
+      .filter((c) => c.status === 'open' && c.due_at)
+      .map((c) => {
+        const lead = Math.max(0, c.reminder_lead_minutes || 0)
+        const fireAt = new Date(c.due_at).getTime() - lead * 60_000
+        return { c, lead, fireAt }
+      })
+      // Only schedule if the fire time (after subtracting the lead) is still ahead.
+      .filter(({ fireAt }) => fireAt > now)
+      .map(({ c, lead, fireAt }) => ({
         id: notifId(c.id),
         title: 'Overwatch',
-        body: `Time to start: ${c.text}`,
+        body: lead > 0 ? `In ${humanizeLead(lead)}: ${c.text}` : `Time to start: ${c.text}`,
         channelId: CHANNEL_ID,
-        schedule: { at: new Date(c.due_at), allowWhileIdle: true },
+        schedule: { at: new Date(fireAt), allowWhileIdle: true },
         actionTypeId: ACTION_TYPE,
         extra: { commitmentId: c.id, text: c.text },
       }))

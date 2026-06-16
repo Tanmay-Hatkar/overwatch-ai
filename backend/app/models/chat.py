@@ -79,6 +79,8 @@ class CommitmentDraft(BaseModel):
     text: str
     due_at: str | None = None  # ISO 8601 datetime or null
     recurrence: str | None = None  # 'daily' | 'weekly' | 'none' / null
+    # Minutes before due_at to nudge: 0 = exact (alarm), >0 = heads-up.
+    reminder_lead_minutes: int = 0
 
 
 # Internal-only schema for what the LLM returns when classifying
@@ -90,6 +92,8 @@ class _ChatIntentResult(BaseModel):
     text: str | None = None
     due_at: str | None = None  # ISO 8601 datetime or null
     recurrence: str | None = None  # 'daily' | 'weekly' | 'none' / null
+    # Minutes before due_at to nudge: 0 = exact (alarm), >0 = heads-up.
+    reminder_lead_minutes: int = 0
     # For MULTIPLE commitments in one message, the LLM fills items instead.
     # When present (non-empty), it takes precedence over text/due_at.
     items: list[CommitmentDraft] | None = None

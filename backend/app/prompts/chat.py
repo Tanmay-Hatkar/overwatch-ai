@@ -45,6 +45,13 @@ SYSTEM_PROMPT = (
     "       recurrence: 'daily' if it repeats every day, 'weekly' if every week,\n"
     "         else 'none'. Phrases like 'every day', 'each morning', 'daily',\n"
     "         'my routine' => daily; 'every week', 'weekly', 'every Monday' => weekly.\n"
+    "       reminder_lead_minutes: how many minutes BEFORE due_at to nudge.\n"
+    "         0 means fire EXACTLY at the time — use 0 for alarms and plain\n"
+    "         reminders: 'wake me at 7', 'remind me to call mom at 3', 'take meds at 9'.\n"
+    "         Use a POSITIVE lead only when the user wants advance warning:\n"
+    "           - a meeting/appointment/call/interview => default 15\n"
+    "           - 'remind me 30 minutes before X' => 30; 'an hour before' => 60.\n"
+    "         If no due time, use 0. When unsure, prefer 0 (no surprise early alarm).\n"
     "     For MULTIPLE distinct commitments in one message (a list, comma- or\n"
     "     'and'-separated), set \"items\" to an array of {\"text\", \"due_at\"} objects —\n"
     "     one per commitment — and leave the top-level text/due_at null. Each item\n"
@@ -78,8 +85,8 @@ SYSTEM_PROMPT = (
     "Reply with ONLY valid JSON. No markdown, no commentary outside the JSON.\n"
     "\n"
     "Format:\n"
-    '  single add: {"intent": "add_commitment", "text": "...", "due_at": "YYYY-MM-DDTHH:MM:SS" | null, "recurrence": "none"|"daily"|"weekly", "reply": "..."}\n'
-    '  multi  add: {"intent": "add_commitment", "items": [{"text": "...", "due_at": "..." | null, "recurrence": "none"|"daily"|"weekly"}, ...], "reply": "..."}\n'
+    '  single add: {"intent": "add_commitment", "text": "...", "due_at": "YYYY-MM-DDTHH:MM:SS" | null, "recurrence": "none"|"daily"|"weekly", "reminder_lead_minutes": 0, "reply": "..."}\n'
+    '  multi  add: {"intent": "add_commitment", "items": [{"text": "...", "due_at": "..." | null, "recurrence": "none"|"daily"|"weekly", "reminder_lead_minutes": 0}, ...], "reply": "..."}\n'
     '  query:      {"intent": "query",          "text": null,  "due_at": null, "reply": "..."}\n'
     '  clarify:    {"intent": "clarify",        "text": null,  "due_at": null, "reply": "<your question>"}\n'
     '  general:    {"intent": "general",        "text": null,  "due_at": null, "reply": "..."}\n'
@@ -117,7 +124,16 @@ SYSTEM_PROMPT = (
     "Output: {\"intent\": \"clarify\", \"text\": null, \"due_at\": null, \"reply\": \"Sure — what time, and how long should I block?\"}\n"
     "\n"
     "User: \"start my night routine every day at 11pm\" (today is Mon 2026-05-12)\n"
-    "Output: {\"intent\": \"add_commitment\", \"text\": \"Start night routine\", \"due_at\": \"2026-05-12T23:00:00\", \"recurrence\": \"daily\", \"reply\": \"Got it — night routine at 11pm, every day.\"}\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Start night routine\", \"due_at\": \"2026-05-12T23:00:00\", \"recurrence\": \"daily\", \"reminder_lead_minutes\": 0, \"reply\": \"Got it — night routine at 11pm, every day.\"}\n"
+    "\n"
+    "User: \"wake me up at 6:30am\" (today is Mon 2026-05-12)\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Wake up\", \"due_at\": \"2026-05-13T06:30:00\", \"reminder_lead_minutes\": 0, \"reply\": \"Alarm set for 6:30am.\"}\n"
+    "\n"
+    "User: \"I have a client meeting at 2pm today\" (today is Mon 2026-05-12)\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Client meeting\", \"due_at\": \"2026-05-12T14:00:00\", \"reminder_lead_minutes\": 15, \"reply\": \"Got it — client meeting at 2pm. I'll give you a heads-up at 1:45.\"}\n"
+    "\n"
+    "User: \"remind me 30 minutes before my dentist appointment at 4pm Friday\"\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Dentist appointment\", \"due_at\": \"2026-05-15T16:00:00\", \"reminder_lead_minutes\": 30, \"reply\": \"Done — dentist at 4pm Friday, heads-up 30 minutes before.\"}\n"
     "\n"
     "User: \"I need to renew my passport, book a dentist appointment, and email the landlord\"\n"
     "Output: {\"intent\": \"add_commitment\", \"items\": [{\"text\": \"Renew passport\", \"due_at\": null}, {\"text\": \"Book dentist appointment\", \"due_at\": null}, {\"text\": \"Email the landlord\", \"due_at\": null}], \"reply\": \"Added 3 things to your list.\"}\n"

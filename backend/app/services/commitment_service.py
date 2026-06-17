@@ -37,6 +37,7 @@ class CommitmentService:
             due_at=payload.due_at,
             recurrence=payload.recurrence.value,
             reminder_lead_minutes=payload.reminder_lead_minutes,
+            group_name=payload.group_name,
         )
 
     def get(self, user_id: UUID, commitment_id: UUID) -> CommitmentResponse | None:
@@ -91,6 +92,7 @@ class CommitmentService:
             status=payload.status,
             recurrence=payload.recurrence.value if payload.recurrence is not None else None,
             reminder_lead_minutes=payload.reminder_lead_minutes,
+            group_name=payload.group_name,
         )
 
     @staticmethod

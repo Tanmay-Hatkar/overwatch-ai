@@ -121,18 +121,29 @@ export default function CommitmentList({ commitments, onChange }) {
         {visibleOpen.length === 0 ? (
           <p className="text-zinc-600 italic text-sm">{emptyMessage}</p>
         ) : (
-          <ul className="space-y-2">
-            {visibleOpen.map((c) => (
-              <CommitmentItem
-                key={c.id}
-                commitment={c}
-                onToggle={() => handleToggleDone(c)}
-                onDelete={() => handleDelete(c)}
-                onEdit={(newText) => handleEdit(c, newText)}
-                onReschedule={(iso) => handleReschedule(c, iso)}
-              />
+          <div className="space-y-4">
+            {groupByName(visibleOpen).map(([groupName, items]) => (
+              <div key={groupName || '__ungrouped'}>
+                {groupName && (
+                  <h4 className="text-[10px] font-semibold tracking-[0.12em] uppercase text-orange-400/70 mb-2">
+                    {groupName} <span className="text-zinc-600">({items.length})</span>
+                  </h4>
+                )}
+                <ul className="space-y-2">
+                  {items.map((c) => (
+                    <CommitmentItem
+                      key={c.id}
+                      commitment={c}
+                      onToggle={() => handleToggleDone(c)}
+                      onDelete={() => handleDelete(c)}
+                      onEdit={(newText) => handleEdit(c, newText)}
+                      onReschedule={(iso) => handleReschedule(c, iso)}
+                    />
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </section>
 
@@ -343,6 +354,26 @@ function toLocalInputValue(iso) {
  *   - { label, overdue } where label is a short human string and
  *     overdue is true if the due date has passed (used for styling).
  */
+/**
+ * Group commitments by group_name for sectioned rendering.
+ * Returns [groupName, items][] with ungrouped ('') first, then named
+ * groups alphabetically. Preserves each group's incoming item order.
+ */
+function groupByName(items) {
+  const map = new Map()
+  for (const c of items) {
+    const key = c.group_name || ''
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(c)
+  }
+  const ordered = []
+  if (map.has('')) ordered.push(['', map.get('')])
+  for (const k of [...map.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b))) {
+    ordered.push([k, map.get(k)])
+  }
+  return ordered
+}
+
 /** Humanize a lead time for the 🔔 badge ("15 min", "1 hr", "2 hr"). */
 function formatLead(minutes) {
   if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} hr`

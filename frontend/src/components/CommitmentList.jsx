@@ -285,14 +285,23 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit, onReschedule }
             className="mt-1 bg-[#222] border border-orange-500/60 rounded px-1.5 py-0.5 text-[11px] text-zinc-200 focus:outline-none [color-scheme:dark]"
           />
         ) : dueInfo ? (
-          <p
-            onClick={() => !isDone && setEditingTime(true)}
-            className={`text-[11px] mt-0.5 ${isDone ? '' : 'cursor-pointer hover:text-orange-400'} ${
-              dueInfo.overdue && !isDone ? 'text-red-400' : 'text-zinc-500'
-            }`}
-            title={isDone ? '' : 'Click to reschedule'}
-          >
-            {dueInfo.label}
+          <p className="text-[11px] mt-0.5 flex items-center gap-2 flex-wrap">
+            <span
+              onClick={() => !isDone && setEditingTime(true)}
+              className={`${isDone ? '' : 'cursor-pointer hover:text-orange-400'} ${
+                dueInfo.overdue && !isDone ? 'text-red-400' : 'text-zinc-500'
+              }`}
+              title={isDone ? '' : 'Click to reschedule'}
+            >
+              {dueInfo.label}
+            </span>
+            {/* Lead-time badge — the reminder shown as a sub-detail of the
+                commitment (Todoist/TickTick style), not a separate item. */}
+            {commitment.reminder_lead_minutes > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-300 bg-emerald-500/[0.08] border border-emerald-500/25 rounded px-1 py-0.5">
+                🔔 {formatLead(commitment.reminder_lead_minutes)} before
+              </span>
+            )}
           </p>
         ) : (
           !isDone && (
@@ -334,6 +343,12 @@ function toLocalInputValue(iso) {
  *   - { label, overdue } where label is a short human string and
  *     overdue is true if the due date has passed (used for styling).
  */
+/** Humanize a lead time for the 🔔 badge ("15 min", "1 hr", "2 hr"). */
+function formatLead(minutes) {
+  if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} hr`
+  return `${minutes} min`
+}
+
 function formatDueAt(dueAt, isDone) {
   if (!dueAt) return null
 

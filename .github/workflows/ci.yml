@@ -36,4 +36,8 @@ jobs:
         # --cov=app           : measure coverage of the app package
         # --cov-report=term-missing : show which lines aren't covered
         # --cov-fail-under=80 : fail the build if coverage drops below 80%
+        env:
+          # CI-only placeholder — never used outside this ephemeral test run,
+          # just needs to be a non-empty string for jwt_service's config check.
+          SESSION_SECRET: ci-test-secret-not-for-production
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80

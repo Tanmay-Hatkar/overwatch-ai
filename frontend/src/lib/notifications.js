@@ -13,11 +13,18 @@
  *
  * Everything here is a no-op on the web build (isNative() === false), where
  * web push handles reminders instead.
+ *
+ * Tier 2 (ADR-0019, see ./ringAlarm.js) piggybacks on this file: it shares
+ * the same Snooze/Done handler (applyReminderAction below) and the same
+ * per-commitment integer id (notifId), so a Snooze/Done tap on EITHER tier's
+ * UI resolves both — no orphaned full-screen ring left armed after the user
+ * has already acted on the ordinary notification.
  */
 
 import { LocalNotifications } from '@capacitor/local-notifications'
 import { isNative } from './native'
 import { updateCommitment } from '../api'
+import { ESCALATE_AFTER_MINUTES, cancelRing, initRingActionListener, reconcileRingAlarms } from './ringAlarm'
 
 const ACTION_TYPE = 'COMMITMENT_REMINDER'
 const CHANNEL_ID = 'reminders'
@@ -44,8 +51,12 @@ async function ensureChannel() {
   }
 }
 
-/** Derive a stable 31-bit integer id from a commitment UUID (plugin needs int ids). */
-function notifId(uuid) {
+/**
+ * Derive a stable 31-bit integer id from a commitment UUID (plugin needs int
+ * ids). Exported: ringAlarm.js uses the exact same id so a Tier-1 and Tier-2
+ * alarm for the same commitment always correlate.
+ */
+export function notifId(uuid) {
   let h = 0
   for (let i = 0; i < uuid.length; i++) {
     h = (h * 31 + uuid.charCodeAt(i)) | 0
@@ -106,6 +117,53 @@ export async function sendTestNotification() {
 }
 
 /**
+ * Shared Snooze/Done handler for BOTH tiers. The Tier-1 notification action
+ * and the Tier-2 ring screen/fallback-notification action funnel into this
+ * one function so "acted on it" means the same thing everywhere:
+ *   - SNOOZE → reschedule the Tier-1 reminder ~10 min later
+ *   - DONE   → mark the commitment done via the API (best-effort)
+ *   - either → cancel any still-pending Tier-2 ring for this commitment, so
+ *     acting on Tier 1 (or the ring itself) never leaves an orphaned alarm
+ *     armed for later (ADR-0019).
+ *
+ * @param {string} actionId  'SNOOZE' | 'DONE'
+ * @param {{id?: number, commitmentId?: string, text?: string}} extra
+ */
+async function applyReminderAction(actionId, extra) {
+  const id = extra.id ?? (extra.commitmentId ? notifId(extra.commitmentId) : undefined)
+
+  if (actionId === 'SNOOZE') {
+    // Reschedule the same reminder → it rings again after the interval.
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: id ?? Date.now() % 2147483647,
+          title: 'Overwatch',
+          body: `Still pending: ${extra.text || 'your commitment'}`,
+          schedule: {
+            at: new Date(Date.now() + SNOOZE_MINUTES * 60_000),
+            allowWhileIdle: true,
+          },
+          actionTypeId: ACTION_TYPE,
+          extra,
+        },
+      ],
+    })
+  } else if (actionId === 'DONE' && extra.commitmentId) {
+    // Mark done without opening the app (best-effort).
+    try {
+      await updateCommitment(extra.commitmentId, { status: 'done' })
+    } catch {
+      // ignore — the user can mark it done in-app later
+    }
+  }
+
+  if (id !== undefined) {
+    await cancelRing(id)
+  }
+}
+
+/**
  * Register the Snooze/Done actions and the handler that reacts to them.
  * Call once at app init (after sign-in).
  */
@@ -130,34 +188,13 @@ export async function initNotificationActions() {
       async (event) => {
         const { actionId, notification } = event
         const extra = notification.extra || {}
-
-        if (actionId === 'SNOOZE') {
-          // Reschedule the same reminder → it rings again after the interval.
-          await LocalNotifications.schedule({
-            notifications: [
-              {
-                id: notification.id,
-                title: 'Overwatch',
-                body: `Still pending: ${extra.text || 'your commitment'}`,
-                schedule: {
-                  at: new Date(Date.now() + SNOOZE_MINUTES * 60_000),
-                  allowWhileIdle: true,
-                },
-                actionTypeId: ACTION_TYPE,
-                extra,
-              },
-            ],
-          })
-        } else if (actionId === 'DONE' && extra.commitmentId) {
-          // Mark done without opening the app (best-effort).
-          try {
-            await updateCommitment(extra.commitmentId, { status: 'done' })
-          } catch {
-            // ignore — the user can mark it done in-app later
-          }
-        }
+        await applyReminderAction(actionId, { ...extra, id: notification.id })
       },
     )
+
+    // Tier 2 (ADR-0019): Snooze/Done taps made on the ring screen or its
+    // fallback notification funnel back through the same handler.
+    await initRingActionListener(applyReminderAction)
   } catch {
     // plugin unavailable / not native — ignore
   }
@@ -181,6 +218,14 @@ function humanizeLead(minutes) {
  *   - lead >0 → a heads-up that many minutes before ("In 15 min: X")
  * Call whenever the commitments list loads or changes so the OS schedule
  * always matches reality.
+ *
+ * Also reconciles the Tier-2 ring escalation (ADR-0019): for the same open
+ * commitments, a companion ring alarm is (re)armed for
+ * due_at + ESCALATE_AFTER_MINUTES. It only actually rings if the commitment
+ * is still open at that time — but note the *scheduling* happens
+ * unconditionally here; the "still open" check is enforced by cancelRing
+ * being called from applyReminderAction the moment the user acts on either
+ * tier (see above), not by re-checking status at fire time.
  */
 export async function syncCommitmentReminders(commitments) {
   if (!isNative()) return
@@ -193,8 +238,9 @@ export async function syncCommitmentReminders(commitments) {
     }
 
     const now = Date.now()
-    const toSchedule = commitments
-      .filter((c) => c.status === 'open' && c.due_at)
+    const openWithDueDate = commitments.filter((c) => c.status === 'open' && c.due_at)
+
+    const toSchedule = openWithDueDate
       .map((c) => {
         const lead = Math.max(0, c.reminder_lead_minutes || 0)
         const fireAt = new Date(c.due_at).getTime() - lead * 60_000
@@ -215,6 +261,22 @@ export async function syncCommitmentReminders(commitments) {
     if (toSchedule.length) {
       await LocalNotifications.schedule({ notifications: toSchedule })
     }
+
+    const ringEntries = openWithDueDate
+      .map((c) => ({
+        c,
+        ringAt: new Date(c.due_at).getTime() + ESCALATE_AFTER_MINUTES * 60_000,
+      }))
+      .filter(({ ringAt }) => ringAt > now)
+      .map(({ c, ringAt }) => ({
+        id: notifId(c.id),
+        commitmentId: c.id,
+        title: 'Overwatch — still pending',
+        body: c.text,
+        atMillis: ringAt,
+      }))
+
+    await reconcileRingAlarms(ringEntries)
   } catch {
     // best-effort — never let reminder scheduling break the app
   }

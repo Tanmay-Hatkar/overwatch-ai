@@ -3,6 +3,13 @@ import { toast } from 'sonner'
 import { getSetting, setSetting, POLL_INTERVAL_PRESETS } from '../lib/settings'
 import { sendTestNotification, notificationsAreNative } from '../lib/notifications'
 import { isProactiveVoiceEnabled, setProactiveVoiceEnabled } from '../lib/proactiveVoice'
+import {
+  isRingEscalationEnabled,
+  setRingEscalationEnabled,
+  checkFullScreenIntentPermission,
+  openFullScreenIntentSettings,
+  ESCALATE_AFTER_MINUTES,
+} from '../lib/ringAlarm'
 
 /**
  * SettingsPanel — modal-ish overlay with user preferences.
@@ -19,11 +26,19 @@ export default function SettingsPanel({ open, onClose }) {
   const [proactiveVoice, setProactiveVoice] = useState(() => isProactiveVoiceEnabled())
   const [testResult, setTestResult] = useState(null)
   const [testing, setTesting] = useState(false)
+  const [ringEnabled, setRingEnabled] = useState(() => isRingEscalationEnabled())
+  const [fullScreenIntentGranted, setFullScreenIntentGranted] = useState(true)
 
   function toggleProactiveVoice() {
     const next = !proactiveVoice
     setProactiveVoice(next)
     setProactiveVoiceEnabled(next)
+  }
+
+  function toggleRingEscalation() {
+    const next = !ringEnabled
+    setRingEnabled(next)
+    setRingEscalationEnabled(next)
   }
 
   async function handleTestReminder() {
@@ -45,6 +60,9 @@ export default function SettingsPanel({ open, onClose }) {
   useEffect(() => {
     if (open && typeof Notification !== 'undefined') {
       setPermission(Notification.permission)
+    }
+    if (open && notificationsAreNative()) {
+      checkFullScreenIntentPermission().then(setFullScreenIntentGranted)
     }
   }, [open])
 
@@ -119,6 +137,48 @@ export default function SettingsPanel({ open, onClose }) {
               Running in: <span className="text-zinc-400">{notificationsAreNative() ? 'native app ✓' : 'browser (alarms use web push, not local)'}</span>
             </p>
           </section>
+
+          {/* Tier-2 ring escalation (ADR-0019) — native app only */}
+          {notificationsAreNative() && (
+            <section>
+              <h3 className="text-[10px] font-semibold tracking-[0.15em] uppercase text-zinc-600 mb-2">
+                Ring escalation
+              </h3>
+              <button
+                onClick={toggleRingEscalation}
+                className={`w-full flex items-center justify-between px-4 py-2 rounded-lg text-sm transition-colors border ${
+                  ringEnabled
+                    ? 'bg-orange-500/[0.08] border-orange-500/40 text-orange-200'
+                    : 'bg-[#1a1a1a] border-[#2a2a2a] text-zinc-300 hover:border-[#3a3a3a]'
+                }`}
+              >
+                <span>Ring loudly if I miss a reminder</span>
+                <span className="text-xs font-semibold uppercase tracking-wider">
+                  {ringEnabled ? 'On' : 'Off'}
+                </span>
+              </button>
+              <p className="text-xs text-zinc-600 mt-2">
+                If a reminder sits unacknowledged for {ESCALATE_AFTER_MINUTES} min, Overwatch
+                escalates to a full-screen alarm that rings and vibrates until you snooze or mark
+                it done — even through Do Not Disturb.
+              </p>
+
+              {ringEnabled && !fullScreenIntentGranted && (
+                <div className="mt-3 text-sm text-orange-200 bg-orange-500/[0.06] border border-orange-500/30 rounded-lg p-3">
+                  <p>
+                    Android is blocking the full-screen alarm. Without this permission, a missed
+                    reminder falls back to a regular notification instead of ringing.
+                  </p>
+                  <button
+                    onClick={openFullScreenIntentSettings}
+                    className="mt-2 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-black font-semibold rounded-md text-xs transition-colors"
+                  >
+                    Grant permission
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Proactive voice */}
           <section>

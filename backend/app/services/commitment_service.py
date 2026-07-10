@@ -4,10 +4,17 @@ commitment_service.py — Business logic layer for Commitments.
 Sits between routes (HTTP) and the repository (data access). Every method
 takes a user_id first, threaded from the `current_user` route dependency,
 so all data access is scoped to the signed-in user (slice 12).
+
+Note: uses `from __future__ import annotations` (PEP 563) so that the
+`list[CommitmentResponse]` return-type annotations on the stale-check
+query methods (added after the pre-existing `list()` method, which shadows
+the builtin `list` within this class body) aren't evaluated eagerly.
 """
 
+from __future__ import annotations
+
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from app.models.commitment import (
@@ -77,12 +84,17 @@ class CommitmentService:
                 logger.info(
                     "Recurring commitment %s rolled forward to %s", commitment_id, next_due
                 )
-                return self._repo.update(
+                rolled = self._repo.update(
                     user_id,
                     commitment_id,
                     due_at=next_due,
                     status=CommitmentStatus.OPEN,
                 )
+                # A rolled-forward occurrence is a new instance, not the same
+                # dormant plan — clear any stale-check state so the new
+                # occurrence starts fresh (ADR-0017).
+                self._repo.clear_stale_check(user_id, commitment_id)
+                return rolled
 
         return self._repo.update(
             user_id,
@@ -118,3 +130,25 @@ class CommitmentService:
         """Hard-delete a commitment by id, scoped to its owner."""
         logger.info("Deleting commitment %s (user %s)", commitment_id, user_id)
         return self._repo.delete(user_id, commitment_id)
+
+    # ------------------------------------------------------------------
+    # Stale-plan detection (ADR-0017)
+    # ------------------------------------------------------------------
+
+    def list_stale_candidates(
+        self, user_id: UUID, updated_before: datetime, today: date
+    ) -> list[CommitmentResponse]:
+        """Open, dormant commitments eligible for a one-time check-in."""
+        return self._repo.list_stale_candidates(user_id, updated_before, today)
+
+    def mark_stale_check_sent(self, user_id: UUID, commitment_id: UUID) -> None:
+        """Record that we've asked "still the plan?" about this commitment."""
+        self._repo.mark_stale_check_sent(user_id, commitment_id)
+
+    def list_pending_stale_checks(self, user_id: UUID) -> list[CommitmentResponse]:
+        """Commitments asked about whose reply hasn't been processed yet."""
+        return self._repo.list_pending_stale_checks(user_id)
+
+    def acknowledge_stale_check(self, user_id: UUID, commitment_id: UUID) -> None:
+        """Mark a pending stale check-in as resolved, so it's not re-intercepted."""
+        self._repo.mark_stale_check_acknowledged(user_id, commitment_id)

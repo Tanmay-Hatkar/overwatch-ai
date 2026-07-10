@@ -58,6 +58,24 @@ def test_completing_a_non_recurring_commitment_closes_it(
     assert updated.status == CommitmentStatus.DONE
 
 
+def test_completing_recurring_commitment_clears_stale_check_state(
+    service: CommitmentService,
+) -> None:
+    """A rolled-forward occurrence is a new instance, not the same dormant
+    plan (ADR-0017) — so a pending stale check-in on it is cleared rather
+    than silently carried into the new occurrence."""
+    due = datetime.now(UTC) - timedelta(hours=1)
+    created = service.create(
+        UID, CommitmentCreate(text="Night routine", due_at=due, recurrence=Recurrence.DAILY)
+    )
+    service.mark_stale_check_sent(UID, created.id)
+    assert len(service.list_pending_stale_checks(UID)) == 1
+
+    service.update(UID, created.id, CommitmentUpdate(status=CommitmentStatus.DONE))
+
+    assert service.list_pending_stale_checks(UID) == []
+
+
 # ---------------------------------------------------------------------------
 # create()
 # ---------------------------------------------------------------------------

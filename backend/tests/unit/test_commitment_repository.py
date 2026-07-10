@@ -6,14 +6,28 @@ user_id (slice 12); a module-level UID stands in for the owner. commitments
 has no FK on user_id, so a bare UUID works without creating a user row.
 """
 
+import sqlite3
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
 from app.models.commitment import CommitmentStatus
 from app.repositories.commitment_repository import CommitmentRepository
 
 UID = uuid4()  # the owner for these tests
+
+
+def _backdate_updated_at(
+    db_connection: sqlite3.Connection, commitment_id, hours_ago: int
+) -> None:
+    """Test helper: rewrite a commitment's updated_at into the past, so it
+    reads as dormant without waiting for real time to pass."""
+    backdated = (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat()
+    db_connection.execute(
+        "UPDATE commitments SET updated_at = ? WHERE id = ?",
+        (backdated, str(commitment_id)),
+    )
+    db_connection.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +212,158 @@ def test_delete_removes_commitment(repo: CommitmentRepository) -> None:
 def test_delete_returns_false_for_missing_id(repo: CommitmentRepository) -> None:
     """delete() returns False when the commitment doesn't exist."""
     assert repo.delete(UID, uuid4()) is False
+
+
+# ---------------------------------------------------------------------------
+# stale-plan detection (ADR-0017)
+# ---------------------------------------------------------------------------
+
+
+def test_list_stale_candidates_returns_dormant_open_items(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """A dormant open commitment (touched before the cutoff, no due date) qualifies."""
+    c = repo.create(UID, text="Dormant", due_at=None)
+    _backdate_updated_at(db_connection, c.id, hours_ago=5)
+
+    updated_before = datetime.now(UTC) - timedelta(hours=4)
+    candidates = repo.list_stale_candidates(UID, updated_before, date.today())
+
+    assert len(candidates) == 1
+    assert candidates[0].id == c.id
+
+
+def test_list_stale_candidates_excludes_recently_touched(repo: CommitmentRepository) -> None:
+    """A commitment touched after the cutoff is not yet stale."""
+    repo.create(UID, text="Fresh", due_at=None)
+
+    updated_before = datetime.now(UTC) - timedelta(hours=4)
+    candidates = repo.list_stale_candidates(UID, updated_before, date.today())
+
+    assert candidates == []
+
+
+def test_list_stale_candidates_excludes_future_due_items(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """A dormant commitment due in the future doesn't qualify yet — its moment hasn't arrived."""
+    future = datetime.now(UTC) + timedelta(days=3)
+    c = repo.create(UID, text="Future plan", due_at=future)
+    _backdate_updated_at(db_connection, c.id, hours_ago=5)
+
+    updated_before = datetime.now(UTC) - timedelta(hours=4)
+    candidates = repo.list_stale_candidates(UID, updated_before, date.today())
+
+    assert candidates == []
+
+
+def test_list_stale_candidates_includes_overdue_items(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """A dormant commitment due in the past qualifies (its moment has come and gone)."""
+    past = datetime.now(UTC) - timedelta(days=1)
+    c = repo.create(UID, text="Overdue plan", due_at=past)
+    _backdate_updated_at(db_connection, c.id, hours_ago=5)
+
+    updated_before = datetime.now(UTC) - timedelta(hours=4)
+    candidates = repo.list_stale_candidates(UID, updated_before, date.today())
+
+    assert len(candidates) == 1
+    assert candidates[0].id == c.id
+
+
+def test_list_stale_candidates_excludes_already_sent(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """A commitment already asked about (stale_check_sent_at set) is not a candidate again."""
+    c = repo.create(UID, text="Already asked", due_at=None)
+    _backdate_updated_at(db_connection, c.id, hours_ago=5)
+    repo.mark_stale_check_sent(UID, c.id)
+
+    updated_before = datetime.now(UTC) - timedelta(hours=4)
+    candidates = repo.list_stale_candidates(UID, updated_before, date.today())
+
+    assert candidates == []
+
+
+def test_list_stale_candidates_excludes_non_open(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """A done commitment is never a stale candidate even if dormant."""
+    c = repo.create(UID, text="Done thing", due_at=None)
+    repo.update(UID, c.id, status=CommitmentStatus.DONE)
+    _backdate_updated_at(db_connection, c.id, hours_ago=5)
+
+    updated_before = datetime.now(UTC) - timedelta(hours=4)
+    candidates = repo.list_stale_candidates(UID, updated_before, date.today())
+
+    assert candidates == []
+
+
+def test_list_stale_candidates_scoped_to_owner(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """A different user's dormant commitment never shows up in this user's candidates."""
+    c = repo.create(uuid4(), text="Someone else's plan", due_at=None)
+    _backdate_updated_at(db_connection, c.id, hours_ago=5)
+
+    updated_before = datetime.now(UTC) - timedelta(hours=4)
+    assert repo.list_stale_candidates(UID, updated_before, date.today()) == []
+
+
+def test_mark_stale_check_sent_sets_timestamp(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """mark_stale_check_sent() records a non-null timestamp on the row."""
+    c = repo.create(UID, text="A", due_at=None)
+    repo.mark_stale_check_sent(UID, c.id)
+
+    row = db_connection.execute(
+        "SELECT stale_check_sent_at FROM commitments WHERE id = ?", (str(c.id),)
+    ).fetchone()
+    assert row["stale_check_sent_at"] is not None
+
+
+def test_list_pending_stale_checks_returns_sent_unacknowledged(repo: CommitmentRepository) -> None:
+    """A commitment that's been asked about but not yet acknowledged is pending."""
+    c = repo.create(UID, text="Pending", due_at=None)
+    repo.mark_stale_check_sent(UID, c.id)
+
+    pending = repo.list_pending_stale_checks(UID)
+
+    assert len(pending) == 1
+    assert pending[0].id == c.id
+
+
+def test_list_pending_stale_checks_excludes_acknowledged(repo: CommitmentRepository) -> None:
+    """Once acknowledged, a check-in is no longer pending."""
+    c = repo.create(UID, text="Acked", due_at=None)
+    repo.mark_stale_check_sent(UID, c.id)
+    repo.mark_stale_check_acknowledged(UID, c.id)
+
+    assert repo.list_pending_stale_checks(UID) == []
+
+
+def test_list_pending_stale_checks_excludes_never_sent(repo: CommitmentRepository) -> None:
+    """A commitment never asked about isn't 'pending' — nothing was sent."""
+    repo.create(UID, text="Never asked", due_at=None)
+    assert repo.list_pending_stale_checks(UID) == []
+
+
+def test_clear_stale_check_resets_both_timestamps(
+    repo: CommitmentRepository, db_connection: sqlite3.Connection
+) -> None:
+    """clear_stale_check() resets sent + acknowledged back to NULL (used on
+    recurring roll-forward — a new occurrence starts with a clean slate)."""
+    c = repo.create(UID, text="Routine", due_at=datetime.now(UTC) + timedelta(hours=1))
+    repo.mark_stale_check_sent(UID, c.id)
+    repo.mark_stale_check_acknowledged(UID, c.id)
+
+    repo.clear_stale_check(UID, c.id)
+
+    row = db_connection.execute(
+        "SELECT stale_check_sent_at, stale_check_acknowledged_at FROM commitments WHERE id = ?",
+        (str(c.id),),
+    ).fetchone()
+    assert row["stale_check_sent_at"] is None
+    assert row["stale_check_acknowledged_at"] is None

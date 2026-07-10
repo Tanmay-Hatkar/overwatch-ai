@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import cors_origin_list, settings
 from app.database import init_db
-from app.routes import auth, briefings, calendar, chat, commitments, push, stats
+from app.routes import auth, briefings, calendar, chat, commitments, push, reflections, stats
 from app.routes.push import get_push_service
 from app.services.reminder_scheduler import ReminderScheduler
 from app.services.stale_check_scheduler import StaleCheckScheduler
@@ -132,6 +132,9 @@ app.include_router(commitments.router)
 
 # Briefings — daily LLM-generated summary with cache
 app.include_router(briefings.router)
+
+# Reflections — evening LLM-generated look-back with cache
+app.include_router(reflections.router)
 
 # Stats — completion counts, streak, 7-day series
 app.include_router(stats.router)

@@ -123,6 +123,15 @@ export async function getTodayBriefing(force = false) {
 }
 
 // ---------------------------------------------------------------------------
+// Reflections
+// ---------------------------------------------------------------------------
+
+export async function getTodayReflection(force = false) {
+  const path = force ? '/reflections/today?force_regenerate=true' : '/reflections/today'
+  return apiFetch(path)
+}
+
+// ---------------------------------------------------------------------------
 // Stats
 // ---------------------------------------------------------------------------
 

@@ -13,4 +13,7 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
+    // Ring alarm (Tier 2, ADR-0019). Must match the hardcoded classpath
+    // version in build.gradle's buildscript block (see comment there).
+    kotlinVersion = '1.9.24'
 }

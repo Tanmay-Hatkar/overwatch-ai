@@ -1,4 +1,6 @@
 apply plugin: 'com.android.application'
+// Ring alarm (Tier 2, ADR-0019): RingAlarmPlugin/RingActivity/etc. are Kotlin.
+apply plugin: 'kotlin-android'
 
 android {
     namespace = "com.tanmayhatkar.overwatch"
@@ -22,6 +24,11 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    // Ring alarm (Tier 2, ADR-0019): align Kotlin bytecode target with the
+    // Java 21 sourceCompatibility already set in capacitor.build.gradle.
+    kotlinOptions {
+        jvmTarget = "21"
+    }
 }
 
 repositories {
@@ -35,6 +42,8 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    // Ring alarm (Tier 2, ADR-0019)
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

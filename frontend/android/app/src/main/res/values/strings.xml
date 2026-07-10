@@ -4,4 +4,8 @@
     <string name="title_activity_main">Overwatch</string>
     <string name="package_name">com.tanmayhatkar.overwatch</string>
     <string name="custom_url_scheme">com.tanmayhatkar.overwatch</string>
+
+    <!-- Home-screen widget (ADR-0020) -->
+    <string name="commitment_widget_description">Overwatch — upcoming commitments</string>
+    <string name="commitment_widget_loading">Loading…</string>
 </resources>

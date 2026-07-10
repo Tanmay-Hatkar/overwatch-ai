@@ -26,6 +26,7 @@ from app.database import init_db
 from app.routes import auth, briefings, calendar, chat, commitments, push, stats
 from app.routes.push import get_push_service
 from app.services.reminder_scheduler import ReminderScheduler
+from app.services.stale_check_scheduler import StaleCheckScheduler
 
 
 def _configure_logging() -> None:
@@ -47,9 +48,10 @@ def _configure_logging() -> None:
 _configure_logging()
 logger = logging.getLogger(__name__)
 
-# Module-level scheduler holder — lifespan populates it on startup,
-# accessor below returns it for FastAPI dependencies.
+# Module-level scheduler holders — lifespan populates them on startup,
+# accessor below returns the push scheduler for FastAPI dependencies.
 _scheduler: ReminderScheduler | None = None
+_stale_scheduler: StaleCheckScheduler | None = None
 
 
 @asynccontextmanager
@@ -61,8 +63,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
       1. Initialize the SQLite schema (idempotent — runs all migrations).
       2. Start the ReminderScheduler background task, which polls
          commitments and fires push notifications when items become due.
+      3. Start the StaleCheckScheduler background task, which asks (once,
+         ever) about open commitments that have gone quiet.
     """
-    global _scheduler
+    global _scheduler, _stale_scheduler
 
     logger.info(
         "Starting Overwatch backend (environment=%s, db=%s)",
@@ -81,10 +85,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             "Set VAPID_PRIVATE_KEY to enable push notifications."
         )
 
+    # Unlike ReminderScheduler, StaleCheckScheduler starts regardless of
+    # VAPID being configured — its "we asked" guarantee is fulfilled via a
+    # logged conversation turn even when push can't be sent, so there is no
+    # push-only reason to skip it.
+    _stale_scheduler = StaleCheckScheduler(push_service)
+    _stale_scheduler.start()
+
     yield
 
     if _scheduler is not None:
         await _scheduler.stop()
+    if _stale_scheduler is not None:
+        await _stale_scheduler.stop()
 
 
 app = FastAPI(

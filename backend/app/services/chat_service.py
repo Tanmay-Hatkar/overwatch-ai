@@ -16,6 +16,13 @@ For general, the LLM just chats. No DB writes.
 Failure handling: if the LLM returns invalid JSON or is unavailable,
 raise ChatError. The route turns this into a 503 with a user-readable
 message.
+
+Stale-plan check-in interception (ADR-0017): before any of the above,
+handle() checks whether the user has a pending "still the plan?" check-in
+(sent by StaleCheckScheduler, not yet acknowledged). If so, one small
+dedicated LLM call classifies the reply and — for still_valid / abandon /
+reschedule — returns immediately without running the normal pipeline. Only
+'unrelated' falls through to the normal flow for that same message.
 """
 
 import json
@@ -36,14 +43,25 @@ from app.models.commitment import (
     CommitmentCreate,
     CommitmentResponse,
     CommitmentStatus,
+    CommitmentUpdate,
     Recurrence,
 )
+from app.models.stale_check import _StaleCheckReplyResult
 from app.prompts.chat import SYSTEM_PROMPT, USER_TEMPLATE
+from app.prompts.stale_check_reply import (
+    SYSTEM_PROMPT as STALE_CHECK_SYSTEM_PROMPT,
+    USER_TEMPLATE as STALE_CHECK_USER_TEMPLATE,
+)
 from app.repositories.conversation_repository import ConversationRepository
 from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
 
 logger = logging.getLogger(__name__)
+
+_DAY_NAMES = [
+    "Monday", "Tuesday", "Wednesday", "Thursday",
+    "Friday", "Saturday", "Sunday",
+]
 
 
 class ChatError(Exception):
@@ -75,6 +93,16 @@ class ChatService:
         """Process one chat message end-to-end, scoped to user_id."""
         user_tz = self._resolve_timezone(request.timezone)
         now_local = datetime.now(user_tz)
+
+        # Stale-plan check-in interception (ADR-0017): if the user has any
+        # pending "still the plan?" check-ins, the very next message is
+        # treated as a reply to them first. Terminal outcomes short-circuit
+        # the rest of handle(); 'unrelated' falls through below.
+        pending = self._service.list_pending_stale_checks(user_id)
+        if pending:
+            intercepted = self._handle_stale_check_reply(user_id, request, now_local, user_tz, pending)
+            if intercepted is not None:
+                return intercepted
 
         # Prefer server-persisted history (follows the user across devices);
         # fall back to the client-supplied history when no repo is wired.
@@ -148,18 +176,8 @@ class ChatService:
         is the recent conversation (DB-backed when available, else client-sent),
         oldest-first.
         """
-        day_names = [
-            "Monday", "Tuesday", "Wednesday", "Thursday",
-            "Friday", "Saturday", "Sunday",
-        ]
-
-        # 14-day lookup, same as the standalone parser (ADR 0003)
-        lookup_lines = []
-        for i in range(14):
-            d = now_local + timedelta(days=i)
-            marker = " (today)" if i == 0 else " (tomorrow)" if i == 1 else ""
-            lookup_lines.append(f"  {d.date().isoformat()} — {day_names[d.weekday()]}{marker}")
-        date_table = "\n".join(lookup_lines)
+        day_names = _DAY_NAMES
+        date_table = self._build_date_lookup(now_local)
 
         # Current local clock time, e.g. "4:42 PM" — lets the LLM resolve
         # "in 30 minutes", "tonight at 7", "in an hour" correctly.
@@ -225,12 +243,18 @@ class ChatService:
         return "\n".join(lines)
 
     @staticmethod
-    def _parse_json(raw: str) -> _ChatIntentResult:
-        """Strip markdown fences, parse JSON, validate against schema."""
+    def _strip_code_fences(raw: str) -> str:
+        """Strip a leading/trailing ```-fence, if present, from an LLM reply."""
         cleaned = raw.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
             cleaned = cleaned.rsplit("```", 1)[0]
+        return cleaned
+
+    @staticmethod
+    def _parse_json(raw: str) -> _ChatIntentResult:
+        """Strip markdown fences, parse JSON, validate against schema."""
+        cleaned = ChatService._strip_code_fences(raw)
 
         try:
             data = json.loads(cleaned)
@@ -243,6 +267,131 @@ class ChatService:
         except Exception as e:
             logger.warning(f"Chat LLM returned malformed structured output: {data!r}")
             raise ChatError(f"LLM output missing required fields: {e}") from e
+
+    @staticmethod
+    def _build_date_lookup(now_local: datetime) -> str:
+        """14-day date lookup table (today + 13 more), same as the standalone parser (ADR 0003)."""
+        lookup_lines = []
+        for i in range(14):
+            d = now_local + timedelta(days=i)
+            marker = " (today)" if i == 0 else " (tomorrow)" if i == 1 else ""
+            lookup_lines.append(f"  {d.date().isoformat()} — {_DAY_NAMES[d.weekday()]}{marker}")
+        return "\n".join(lookup_lines)
+
+    # ------------------------------------------------------------------
+    # Stale-plan check-in interception (ADR-0017)
+    # ------------------------------------------------------------------
+
+    def _handle_stale_check_reply(
+        self,
+        user_id: UUID,
+        request: ChatRequest,
+        now_local: datetime,
+        user_tz: ZoneInfo,
+        pending: list[CommitmentResponse],
+    ) -> ChatResponse | None:
+        """
+        Intercept the user's reply to one or more pending stale-plan check-ins.
+
+        Runs one small dedicated LLM call to classify the reply, applies the
+        outcome to every pending commitment, and acknowledges each so this
+        interception fires at most once per check-in.
+
+        Returns:
+            A ChatResponse for a terminal outcome (still_valid / abandon /
+            reschedule), or None when the LLM is unavailable, unparseable,
+            or the outcome is 'unrelated' — in all of those cases the
+            caller falls through to the normal chat pipeline for the same
+            message.
+        """
+        user_prompt = self._build_stale_check_prompt(request.message, now_local, pending)
+
+        raw = call_llm(
+            system_prompt=STALE_CHECK_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=settings.llm_intent_temperature,
+        )
+        if raw is None:
+            logger.warning("stale-check reply LLM unavailable; leaving check-ins pending")
+            return None
+
+        try:
+            result = self._parse_stale_check_json(raw)
+        except ChatError as e:
+            logger.warning(f"stale-check reply parse failed: {e}; leaving check-ins pending")
+            return None
+
+        if result.outcome == "unrelated":
+            for c in pending:
+                self._service.acknowledge_stale_check(user_id, c.id)
+            return None
+
+        for c in pending:
+            self._apply_stale_check_outcome(user_id, c, result, user_tz)
+            self._service.acknowledge_stale_check(user_id, c.id)
+
+        if self._conversation is not None:
+            self._conversation.append(user_id, "user", request.message)
+            self._conversation.append(user_id, "assistant", result.reply)
+
+        return ChatResponse(reply=result.reply, intent="general", commitment=None)
+
+    def _apply_stale_check_outcome(
+        self,
+        user_id: UUID,
+        commitment: CommitmentResponse,
+        result: _StaleCheckReplyResult,
+        user_tz: ZoneInfo,
+    ) -> None:
+        """
+        Apply a classified stale-check outcome to one pending commitment.
+
+        still_valid / unrelated: no state change beyond acknowledgement
+        (handled by the caller). abandon: mark abandoned — a choice the
+        user made, never framed as a failure. reschedule: move due_at if
+        the LLM extracted a new time; leave it unchanged otherwise (never
+        guess at a time the user didn't give).
+        """
+        if result.outcome == "abandon":
+            self._service.update(
+                user_id, commitment.id, CommitmentUpdate(status=CommitmentStatus.ABANDONED)
+            )
+        elif result.outcome == "reschedule":
+            new_due = self._parse_due_at(result.new_due_at, user_tz)
+            if new_due is not None:
+                self._service.update(user_id, commitment.id, CommitmentUpdate(due_at=new_due))
+
+    @staticmethod
+    def _build_stale_check_prompt(
+        message: str, now_local: datetime, pending: list[CommitmentResponse]
+    ) -> str:
+        """Build the user prompt for the stale-check reply classifier."""
+        pending_list = "\n".join(f"  - {c.text}" for c in pending)
+        return STALE_CHECK_USER_TEMPLATE.format(
+            now_time=now_local.strftime("%I:%M %p").lstrip("0"),
+            today_name=_DAY_NAMES[now_local.weekday()],
+            today_date=now_local.date().isoformat(),
+            date_table=ChatService._build_date_lookup(now_local),
+            pending_list=pending_list,
+            message=message,
+        )
+
+    @staticmethod
+    def _parse_stale_check_json(raw: str) -> _StaleCheckReplyResult:
+        """Strip markdown fences, parse JSON, validate against the stale-check schema."""
+        cleaned = ChatService._strip_code_fences(raw)
+
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            logger.warning(f"stale-check LLM returned non-JSON: {raw!r}")
+            raise ChatError(f"stale-check LLM output was not valid JSON: {e}") from e
+
+        try:
+            return _StaleCheckReplyResult(**data)
+        except Exception as e:
+            logger.warning(f"stale-check LLM returned malformed structured output: {data!r}")
+            raise ChatError(f"stale-check LLM output missing required fields: {e}") from e
 
     def _create_commitments(
         self, user_id: UUID, result: _ChatIntentResult, user_tz: ZoneInfo

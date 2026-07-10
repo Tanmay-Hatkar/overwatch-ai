@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from app.models.chat import ChatRequest, ChatTurn
-from app.models.commitment import CommitmentStatus
+from app.models.commitment import CommitmentCreate, CommitmentStatus
 from app.providers.mock_calendar_provider import MockCalendarProvider
 from app.services.calendar_service import CalendarService
 from app.services.chat_service import ChatError, ChatService
@@ -376,3 +376,166 @@ def test_raises_on_invalid_intent_value(chat_service: ChatService) -> None:
     with patch(LLM_PATCH, return_value=fake):
         with pytest.raises(ChatError):
             chat_service.handle(UID, ChatRequest(message="hi"))
+
+
+# ---------------------------------------------------------------------------
+# stale-check reply interception (ADR-0017)
+# ---------------------------------------------------------------------------
+
+
+def _stale_llm_response(outcome: str, **fields) -> str:
+    """Helper to build the JSON the stale-check classifier is expected to return."""
+    payload = {"outcome": outcome, "new_due_at": None, "reply": "OK."}
+    payload.update(fields)
+    return json.dumps(payload)
+
+
+def test_no_pending_check_leaves_normal_flow_unchanged(chat_service: ChatService) -> None:
+    """With no pending stale check-in, handle() behaves exactly as before —
+    exactly one (normal) LLM call."""
+    fake = _llm_response("general", reply="Hi there.")
+    with patch(LLM_PATCH, return_value=fake) as mock:
+        result = chat_service.handle(UID, ChatRequest(message="hi"))
+
+    assert result.intent == "general"
+    mock.assert_called_once()
+
+
+def test_pending_check_still_valid_short_circuits_normal_flow(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """A 'still_valid' reply is handled entirely by the stale-check
+    classifier — the normal add/query/general LLM call never runs."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    fake = _stale_llm_response("still_valid", reply="Good to know — still on the list.")
+    with patch(LLM_PATCH, return_value=fake) as mock:
+        result = chat_service.handle(UID, ChatRequest(message="yeah still doing it"))
+
+    assert result.intent == "general"
+    assert result.reply == "Good to know — still on the list."
+    mock.assert_called_once()  # one LLM call total (the stale-check classifier)
+
+    # No longer pending — this only ever fires once.
+    assert service.list_pending_stale_checks(UID) == []
+    # The plan itself is unchanged.
+    assert service.get(UID, c.id).status == CommitmentStatus.OPEN
+
+
+def test_pending_check_abandon_updates_status(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """An 'abandon' reply marks the commitment abandoned — a choice the
+    user made, not a deletion, not a failure."""
+    c = service.create(UID, CommitmentCreate(text="Call the dentist", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    fake = _stale_llm_response("abandon", reply="Got it — letting that one go.")
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="nah don't need to anymore"))
+
+    assert result.reply == "Got it — letting that one go."
+    assert service.get(UID, c.id).status == CommitmentStatus.ABANDONED
+    assert service.list_pending_stale_checks(UID) == []
+
+
+def test_pending_check_reschedule_updates_due_at(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """A 'reschedule' reply moves due_at to the new time, resolved in the
+    user's timezone (same helper the normal add_commitment path uses)."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    fake = _stale_llm_response(
+        "reschedule", new_due_at="2026-07-10T17:00:00", reply="Moved to tomorrow at 5pm."
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(
+            UID, ChatRequest(message="yeah but tomorrow at 5pm now", timezone="America/Toronto")
+        )
+
+    assert result.reply == "Moved to tomorrow at 5pm."
+    updated = service.get(UID, c.id)
+    assert updated.due_at is not None
+    # 17:00 America/Toronto (EDT, UTC-4) == 21:00 UTC
+    assert updated.due_at.astimezone(UTC).hour == 21
+    assert service.list_pending_stale_checks(UID) == []
+
+
+def test_pending_check_reschedule_without_new_time_leaves_due_at_unchanged(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """If the classifier can't extract a new time, we never guess one —
+    due_at is left as-is (still acknowledged so it isn't re-intercepted)."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    fake = _stale_llm_response("reschedule", new_due_at=None, reply="No problem — when though?")
+    with patch(LLM_PATCH, return_value=fake):
+        chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
+
+    assert service.get(UID, c.id).due_at is None
+    assert service.list_pending_stale_checks(UID) == []
+
+
+def test_pending_check_unrelated_falls_through_to_normal_flow(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """An 'unrelated' reply acknowledges the check-in but still runs the
+    normal chat pipeline for the SAME message (two LLM calls total)."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    stale_fake = _stale_llm_response("unrelated", reply="")
+    normal_fake = _llm_response("general", reply="Sure, tell me more.")
+
+    with patch(LLM_PATCH, side_effect=[stale_fake, normal_fake]) as mock:
+        result = chat_service.handle(UID, ChatRequest(message="also remind me to call mom later"))
+
+    assert mock.call_count == 2
+    assert result.intent == "general"
+    assert result.reply == "Sure, tell me more."
+    # The check-in is no longer pending even though the reply was unrelated —
+    # we don't keep re-intercepting future messages waiting for an answer.
+    assert service.list_pending_stale_checks(UID) == []
+    assert service.get(UID, c.id).status == CommitmentStatus.OPEN
+
+
+def test_multiple_pending_checks_all_acknowledged_by_one_reply(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """When several check-ins are pending at once, a single reply resolves
+    all of them in one dedicated LLM call."""
+    a = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    b = service.create(UID, CommitmentCreate(text="Call the plumber", due_at=None))
+    service.mark_stale_check_sent(UID, a.id)
+    service.mark_stale_check_sent(UID, b.id)
+
+    fake = _stale_llm_response("still_valid", reply="Both still on — good to know.")
+    with patch(LLM_PATCH, return_value=fake) as mock:
+        result = chat_service.handle(UID, ChatRequest(message="yeah both still happening"))
+
+    assert result.reply == "Both still on — good to know."
+    mock.assert_called_once()
+    assert service.list_pending_stale_checks(UID) == []
+
+
+def test_pending_check_llm_unavailable_leaves_it_pending_and_falls_through(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """If the stale-check classifier call itself fails (LLM unavailable),
+    we don't lose the pending state — it falls through to the normal
+    pipeline for this message and stays pending for a future reply."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    normal_fake = _llm_response("general", reply="Hey.")
+    with patch(LLM_PATCH, side_effect=[None, normal_fake]) as mock:
+        result = chat_service.handle(UID, ChatRequest(message="hi"))
+
+    assert mock.call_count == 2
+    assert result.reply == "Hey."
+    # Still pending — we'll try to interpret the next message as a reply too.
+    assert len(service.list_pending_stale_checks(UID)) == 1

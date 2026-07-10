@@ -7,10 +7,17 @@ just reads, writes, and conversions between database rows and domain objects.
 Multi-tenancy (slice 12): every method takes a user_id as its first
 parameter. Reads filter by it; writes stamp it. There is no "all users"
 path — that boundary is the safety net against cross-tenant leaks.
+
+Note: uses `from __future__ import annotations` (PEP 563) so that the
+`list[CommitmentResponse]` return-type annotations on the stale-check
+query methods (added after the pre-existing `list()` method, which shadows
+the builtin `list` within this class body) aren't evaluated eagerly.
 """
 
+from __future__ import annotations
+
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from app.models.commitment import CommitmentResponse, CommitmentStatus, Recurrence
@@ -196,6 +203,119 @@ class CommitmentRepository:
         )
         self._conn.commit()
         return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Stale-plan detection (ADR-0017)
+    # ------------------------------------------------------------------
+
+    def list_stale_candidates(
+        self, user_id: UUID, updated_before: datetime, today: date
+    ) -> list[CommitmentResponse]:
+        """
+        Open commitments that have gone quiet and are eligible for a
+        one-time "still the plan?" check-in.
+
+        Qualifies when ALL of:
+          - status is open
+          - never asked before (stale_check_sent_at IS NULL)
+          - not touched since `updated_before` (dormant long enough)
+          - has no due date, OR its due date is today or earlier (a plan
+            for next week isn't stale yet — only ones whose moment has
+            arrived, or has none, qualify)
+
+        Args:
+            user_id: Owner to scope the search to.
+            updated_before: Cutoff — only commitments last touched at or
+                before this timestamp are dormant enough to ask about.
+            today: Only commitments with no due date, or due on/before
+                this date, qualify.
+
+        Returns:
+            Matching commitments, most recently updated first.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT * FROM commitments
+             WHERE user_id = ?
+               AND status = ?
+               AND stale_check_sent_at IS NULL
+               AND updated_at <= ?
+               AND (due_at IS NULL OR date(due_at) <= date(?))
+             ORDER BY updated_at DESC
+            """,
+            (
+                str(user_id),
+                CommitmentStatus.OPEN.value,
+                updated_before.isoformat(),
+                today.isoformat(),
+            ),
+        ).fetchall()
+        return [self._row_to_response(row) for row in rows]
+
+    def mark_stale_check_sent(self, user_id: UUID, commitment_id: UUID) -> None:
+        """
+        Record that we've asked "still the plan?" about this commitment.
+
+        This is a one-way door — once set, the commitment is never a stale
+        candidate again (see list_stale_candidates), fulfilling the "fires
+        once per commitment, ever" guarantee.
+        """
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            "UPDATE commitments SET stale_check_sent_at = ? WHERE id = ? AND user_id = ?",
+            (now, str(commitment_id), str(user_id)),
+        )
+        self._conn.commit()
+
+    def list_pending_stale_checks(self, user_id: UUID) -> list[CommitmentResponse]:
+        """
+        Commitments we've asked about but whose reply hasn't been processed yet.
+
+        ChatService checks this before its normal pipeline so the user's
+        next message can be interpreted as an answer to the check-in.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT * FROM commitments
+             WHERE user_id = ?
+               AND stale_check_sent_at IS NOT NULL
+               AND stale_check_acknowledged_at IS NULL
+             ORDER BY stale_check_sent_at ASC
+            """,
+            (str(user_id),),
+        ).fetchall()
+        return [self._row_to_response(row) for row in rows]
+
+    def mark_stale_check_acknowledged(self, user_id: UUID, commitment_id: UUID) -> None:
+        """
+        Record that the user's reply to a pending stale check-in was
+        processed (regardless of outcome), so it's not intercepted again.
+        """
+        now = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            "UPDATE commitments SET stale_check_acknowledged_at = ? WHERE id = ? AND user_id = ?",
+            (now, str(commitment_id), str(user_id)),
+        )
+        self._conn.commit()
+
+    def clear_stale_check(self, user_id: UUID, commitment_id: UUID) -> None:
+        """
+        Reset stale-check bookkeeping to NULL.
+
+        Used when a recurring commitment rolls forward to its next
+        occurrence (ADR-0015) — the new occurrence is a fresh instance,
+        not the same dormant plan, so it deserves its own future check-in
+        rather than inheriting the old one's "already asked" state.
+        """
+        self._conn.execute(
+            """
+            UPDATE commitments
+               SET stale_check_sent_at = NULL, stale_check_acknowledged_at = NULL
+             WHERE id = ? AND user_id = ?
+            """,
+            (str(commitment_id), str(user_id)),
+        )
+        self._conn.commit()
 
     @staticmethod
     def _row_to_response(row: sqlite3.Row) -> CommitmentResponse:

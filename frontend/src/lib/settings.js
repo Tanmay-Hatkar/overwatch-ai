@@ -11,10 +11,19 @@
 
 const KEYS = {
   pollIntervalMs: 'overwatch.settings.pollIntervalMs',
+  // Tier-2 ring escalation (ADR-0019). Android-only in practice (ringAlarm.js
+  // gates on isNative()), but the preference itself is stored the same way
+  // as everything else so it survives reinstalls-with-backup and is easy to
+  // inspect/reset alongside other settings.
+  ringEscalationEnabled: 'overwatch.settings.ringEscalationEnabled',
 }
 
 const DEFAULTS = {
   pollIntervalMs: 30 * 1000, // 30 seconds
+  // Default ON: this app has exactly one real user today (the founder), who
+  // explicitly asked for "the phone actually rings" behavior — see ADR-0019.
+  // Revisit the default once there are users who didn't ask for this.
+  ringEscalationEnabled: true,
 }
 
 /** Read a single setting with fallback to default. */

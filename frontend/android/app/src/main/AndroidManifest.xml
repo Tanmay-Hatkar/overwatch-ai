@@ -72,6 +72,20 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Tier-2 ring escalation (ADR-0019): full-screen "the phone actually
+             rings" alarm shown when a Tier-1 reminder was ignored. -->
+        <activity
+            android:name=".RingActivity"
+            android:theme="@style/AppTheme.Ring"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:exported="false" />
+
+        <receiver android:name=".RingAlarmReceiver" android:exported="false" />
+        <receiver android:name=".RingActionReceiver" android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -84,6 +98,9 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Tier-2 ring escalation (ADR-0019): full-screen alarm on Android 14+ -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <!-- Voice input (native speech recognition) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />

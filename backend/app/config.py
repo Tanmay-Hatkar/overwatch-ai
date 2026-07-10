@@ -59,6 +59,21 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
+    # Stale-plan detection (ADR-0017)
+    # =========================================================================
+    stale_check_threshold_hours: int = Field(
+        default=4,
+        description=(
+            "Hours of no activity on an open commitment before it qualifies "
+            "for a one-time 'still the plan?' check-in"
+        ),
+    )
+    stale_check_poll_interval_seconds: int = Field(
+        default=900,
+        description="How often the stale-check scheduler looks for dormant commitments to ask about",
+    )
+
+    # =========================================================================
     # Authentication (Google OAuth + JWT sessions)
     # =========================================================================
     google_client_id: str = Field(

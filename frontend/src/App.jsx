@@ -5,6 +5,7 @@ import ChatBar from './components/ChatBar'
 import CommitmentList from './components/CommitmentList'
 import LoginScreen from './components/LoginScreen'
 import PushSetup from './components/PushSetup'
+import ReflectionCard from './components/ReflectionCard'
 import SettingsPanel from './components/SettingsPanel'
 import WeeklyCalendar from './components/WeeklyCalendar'
 // CommitmentForm, NotificationStatus, StatsBar are intentionally not
@@ -205,6 +206,11 @@ function Overwatch() {
             Calendar OAuth ships (avoiding the old mock-data look). */}
         <main className="space-y-6">
           <BriefingCard refreshTrigger={commitmentsVersion} />
+
+          {/* Always available alongside the briefing (kept simple for v1 —
+              no time-of-day gating). Shows what happened today so far and
+              asks about anything still open, rather than reporting on it. */}
+          <ReflectionCard refreshTrigger={commitmentsVersion} />
 
           <WeeklyCalendar
             commitments={commitments}

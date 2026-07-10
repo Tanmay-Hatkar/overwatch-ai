@@ -19,4 +19,9 @@
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
     </style>
+
+    <!-- Tier-2 ring escalation (ADR-0019): full-screen, no action bar. -->
+    <style name="AppTheme.Ring" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
 </resources>

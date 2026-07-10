@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { sendChat, getChatHistory, clearChatHistory } from '../api'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
-import { speak, cancelSpeech, isSpeechSynthesisSupported } from '../lib/speech'
+import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis'
 
 const HISTORY_KEY = 'overwatch.chat.history'
 const SPEAK_KEY = 'overwatch.chat.speakReplies'
@@ -70,6 +70,11 @@ export default function ChatBar({ onAction, onHeightChange }) {
     stop: stopListening,
   } = useSpeechRecognition({ onResult: (text) => setInput(text) })
 
+  // Text-to-speech. Dispatches to the native TTS engine on the Capacitor
+  // app (the WebView's speechSynthesis is unreliable) or the Web Speech API
+  // on the browser — see hooks/useSpeechSynthesis.
+  const { supported: ttsSupported, speak, cancel: cancelSpeech } = useSpeechSynthesis()
+
   // Surface mic errors (most commonly a denied permission) as a toast.
   useEffect(() => {
     if (!micError) return
@@ -84,7 +89,7 @@ export default function ChatBar({ onAction, onHeightChange }) {
   useEffect(() => {
     localStorage.setItem(SPEAK_KEY, speakReplies ? '1' : '0')
     if (!speakReplies) cancelSpeech()
-  }, [speakReplies])
+  }, [speakReplies, cancelSpeech])
 
   // On mount, load the authoritative history from the server (cross-device).
   // localStorage already seeded the initial state for an instant first paint;
@@ -252,9 +257,9 @@ export default function ChatBar({ onAction, onHeightChange }) {
 
           {/* Bottom toolbar — shows when there's history, or whenever
               text-to-speech is available (for the speak toggle). */}
-          {(history.length > 0 || isSpeechSynthesisSupported()) && (
+          {(history.length > 0 || ttsSupported) && (
             <div className="flex items-center gap-3 mt-2 text-[10px] text-zinc-600">
-              {isSpeechSynthesisSupported() && (
+              {ttsSupported && (
                 <button
                   onClick={() => setSpeakReplies((s) => !s)}
                   className={`uppercase tracking-widest transition-colors ${

@@ -9,8 +9,9 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:8.13.0'
         classpath 'com.google.gms:google-services:4.4.4'
-        // Ring alarm (Tier 2, ADR-0019) is written in Kotlin. Hardcoded here
-        // (rather than reading rootProject.ext.kotlinVersion) because this
+        // Kotlin Android plugin — shared by ring alarm (Tier 2, ADR-0019) and
+        // the home-screen widget (ADR-0020), first Kotlin usage in this
+        // module. Hardcoded (not rootProject.ext.kotlinVersion) because this
         // buildscript block evaluates before "apply from: variables.gradle"
         // below runs. Keep in sync with variables.gradle's kotlinVersion.
         classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'

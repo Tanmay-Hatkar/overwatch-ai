@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  commitment_widget_info.xml — AppWidgetProviderInfo for
+  CommitmentWidgetReceiver (ADR-0020).
+
+  This is a plain home-screen widget. There is no separate "lock screen
+  widget" category to opt into — Android 5.0 removed true per-app
+  lock-screen widgets in 2014, and where they've come back (Android 16
+  QPR2+ on Pixel; Samsung Good Lock "LockStar") they work by pinning this
+  same AppWidgetProviderInfo, via the same AppWidgetProvider/Glance
+  mechanism, to the lock screen. Nothing here needs to change for that —
+  see ADR-0020 for the full explanation.
+
+  updatePeriodMillis is set to the same 30-minute floor as the
+  WorkManager PeriodicWorkRequest in CommitmentWidgetReceiver — the OS
+  clamps anything shorter anyway. The actual data refresh is driven
+  exclusively by that WorkManager job; this field is a secondary,
+  OS-level nudge for onUpdate() (which Glance uses to re-render from
+  whatever state is already cached, not to fetch new data).
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/commitment_widget_description"
+    android:initialLayout="@layout/commitment_widget_loading"
+    android:maxResizeHeight="220dp"
+    android:maxResizeWidth="330dp"
+    android:minHeight="110dp"
+    android:minWidth="180dp"
+    android:previewImage="@mipmap/ic_launcher"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="2"
+    android:targetCellWidth="3"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

@@ -1,5 +1,6 @@
 apply plugin: 'com.android.application'
-// Ring alarm (Tier 2, ADR-0019): RingAlarmPlugin/RingActivity/etc. are Kotlin.
+// Kotlin Android plugin — shared by ring alarm (Tier 2, ADR-0019:
+// RingAlarmPlugin/RingActivity/etc.) and the home-screen widget (ADR-0020).
 apply plugin: 'kotlin-android'
 
 android {
@@ -17,6 +18,14 @@ android {
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+        // Home-screen widget (ADR-0020): backend host the widget's
+        // background worker calls directly. PLACEHOLDER — a human must
+        // point this at the real Railway backend URL (see
+        // docs/DEPLOYMENT.md §3.5, the same value Vercel's
+        // VITE_API_BASE_URL uses) before building a release APK.
+        // Override without editing this file via
+        // gradle.properties (widgetApiBaseUrl=...) or -PwidgetApiBaseUrl=... on the CLI.
+        buildConfigField "String", "WIDGET_API_BASE_URL", "\"${project.findProperty('widgetApiBaseUrl') ?: 'https://REPLACE_WITH_RAILWAY_BACKEND_URL.up.railway.app'}\""
     }
     buildTypes {
         release {
@@ -24,10 +33,25 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    // Ring alarm (Tier 2, ADR-0019): align Kotlin bytecode target with the
-    // Java 21 sourceCompatibility already set in capacitor.build.gradle.
+    // Compose/Kotlin build config, shared by ring alarm (Tier 2, ADR-0019)
+    // and the home-screen widget (ADR-0020). Jetpack Glance is Compose-based,
+    // so this module needs the Compose compiler + BuildConfig generation
+    // turned on. Java/Kotlin target 21 matches capacitor-android's own core
+    // module (see node_modules/@capacitor/android/capacitor/build.gradle)
+    // and aligns ring alarm's Kotlin bytecode target with the same value.
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion '1.5.14'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
     kotlinOptions {
-        jvmTarget = "21"
+        jvmTarget = '21'
     }
 }
 
@@ -49,6 +73,11 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // Home-screen widget (ADR-0020): Jetpack Glance (Compose-based
+    // AppWidget UI) + WorkManager for the periodic background refresh.
+    implementation "androidx.glance:glance-appwidget:$androidxGlanceVersion"
+    implementation "androidx.work:work-runtime-ktx:$androidxWorkVersion"
 }
 
 apply from: 'capacitor.build.gradle'

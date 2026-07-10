@@ -32,7 +32,36 @@
                 <data android:scheme="overwatch" android:host="auth" />
             </intent-filter>
 
+            <!-- Deep link for home-screen widget row taps (ADR-0020):
+                 overwatch://commitment/{id}. Reuses the same "overwatch"
+                 custom scheme already registered above for the OAuth
+                 callback rather than inventing a second mechanism. v1 just
+                 opens the app on this route; wiring the SPA to navigate to
+                 the specific commitment is a frontend follow-up. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="overwatch" android:host="commitment" />
+            </intent-filter>
+
         </activity>
+
+        <!-- Home-screen widget (ADR-0020): commitment list. Exported=true
+             because the AppWidgetHost (the launcher, a different app) is
+             what sends the APPWIDGET_UPDATE broadcast this receiver
+             listens for. -->
+        <receiver
+            android:name=".widget.CommitmentWidgetReceiver"
+            android:exported="true"
+            android:label="@string/commitment_widget_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/commitment_widget_info" />
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -13,7 +13,12 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
-    // Ring alarm (Tier 2, ADR-0019). Must match the hardcoded classpath
-    // version in build.gradle's buildscript block (see comment there).
+
+    // Kotlin — shared by ring alarm (Tier 2, ADR-0019) and the home-screen
+    // widget (ADR-0020), first Kotlin usage in this module. Must match the
+    // hardcoded classpath version in build.gradle's buildscript block.
     kotlinVersion = '1.9.24'
+    // Home-screen widget (ADR-0020)
+    androidxGlanceVersion = '1.1.1'
+    androidxWorkVersion = '2.9.1'
 }

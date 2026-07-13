@@ -70,8 +70,9 @@ class CommitmentParserService:
         parsed = self._parse_json(raw)
         text = self._extract_text(parsed)
         due_at = self._extract_due_at(parsed)
+        reminder_phrase = self._extract_reminder_phrase(parsed)
 
-        payload = CommitmentCreate(text=text, due_at=due_at)
+        payload = CommitmentCreate(text=text, due_at=due_at, reminder_phrase=reminder_phrase)
         logger.info(f"Parsed commitment: text={text!r}, due_at={due_at}")
         return self._service.create(user_id, payload)
 
@@ -144,3 +145,20 @@ class CommitmentParserService:
         except (ValueError, TypeError):
             logger.warning(f"LLM returned invalid due_at, dropping: {due_at_str!r}")
             return None
+
+    @staticmethod
+    def _extract_reminder_phrase(parsed: dict) -> str | None:
+        """
+        Pull the 'reminder_phrase' field. Lenient: this is a nice-to-have
+        presentation string, not correctness-critical like text/due_at, so
+        any missing/invalid value logs a warning and returns None rather
+        than failing the whole parse — callers fall back to a templated
+        string when this is None (see ADR-0021).
+        """
+        phrase = parsed.get("reminder_phrase")
+        if phrase is None:
+            return None
+        if not isinstance(phrase, str) or not phrase.strip():
+            logger.warning(f"LLM returned invalid reminder_phrase, dropping: {phrase!r}")
+            return None
+        return phrase.strip()

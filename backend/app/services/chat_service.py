@@ -405,10 +405,10 @@ class ChatService:
 
         Returns the created records (may be empty if nothing was usable).
         """
-        # Normalize to a list of (text, due_str, recurrence, lead, group) drafts.
+        # Normalize to a list of (text, due_str, recurrence, lead) drafts.
         if result.items:
             drafts = [
-                (d.text, d.due_at, d.recurrence, d.reminder_lead_minutes, d.group_name)
+                (d.text, d.due_at, d.recurrence, d.reminder_lead_minutes)
                 for d in result.items
             ]
         elif result.text:
@@ -418,7 +418,6 @@ class ChatService:
                     result.due_at,
                     result.recurrence,
                     result.reminder_lead_minutes,
-                    result.group_name,
                 )
             ]
         else:
@@ -426,7 +425,7 @@ class ChatService:
             return []
 
         created: list[CommitmentResponse] = []
-        for text_raw, due_raw, rec_raw, lead_raw, group_raw in drafts:
+        for text_raw, due_raw, rec_raw, lead_raw in drafts:
             text = (text_raw or "").strip()
             if not text:
                 continue
@@ -438,7 +437,6 @@ class ChatService:
                 due_at=due_at,
                 recurrence=self._parse_recurrence(rec_raw),
                 reminder_lead_minutes=lead,
-                group_name=(group_raw or "").strip()[:60],
             )
             created.append(self._service.create(user_id, payload))
         return created

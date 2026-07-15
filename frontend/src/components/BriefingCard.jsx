@@ -79,7 +79,7 @@ export default function BriefingCard({ refreshTrigger }) {
             <p className="text-[15px] leading-relaxed text-zinc-200">
               {briefing.content}
             </p>
-            <div className="mt-3 pt-3 border-t border-white/[0.05] flex gap-4 text-[11px] text-zinc-500">
+            <div className="mt-3 pt-3 border-t border-white/[0.05] flex gap-4 text-[11px] text-zinc-500 flex-wrap">
               <span>
                 <span className="text-zinc-300">{briefing.today_count}</span> due today
               </span>
@@ -89,6 +89,11 @@ export default function BriefingCard({ refreshTrigger }) {
                 </span>{' '}
                 overdue
               </span>
+              {briefing.floating_count > 0 && (
+                <span>
+                  <span className="text-zinc-300">{briefing.floating_count}</span> no time set
+                </span>
+              )}
             </div>
           </>
         )}

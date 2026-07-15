@@ -73,14 +73,6 @@ class CommitmentBase(BaseModel):
             "editable per item."
         ),
     )
-    group_name: str = Field(
-        default="",
-        max_length=60,
-        description=(
-            "Optional group/section the commitment belongs to (e.g. 'Groceries', "
-            "'Work', 'Overwatch'). Empty = ungrouped. Used to organize the list."
-        ),
-    )
 
 
 class CommitmentCreate(CommitmentBase):
@@ -109,7 +101,6 @@ class CommitmentUpdate(BaseModel):
     status: CommitmentStatus | None = None
     recurrence: Recurrence | None = None
     reminder_lead_minutes: int | None = Field(default=None, ge=0, le=1440)
-    group_name: str | None = Field(default=None, max_length=60)
 
 
 class CommitmentResponse(CommitmentBase):

@@ -28,6 +28,14 @@ class BriefingResponse(BaseModel):
         ge=0,
         description="Number of open commitments past their due date.",
     )
+    floating_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of open commitments with no due time — today's list, "
+            "written down without a clock time (ADR-0023)."
+        ),
+    )
     generated_at: datetime = Field(
         ...,
         description="Timestamp when this briefing was generated.",

@@ -143,14 +143,6 @@ export async function getTodayStats() {
 // Calendar
 // ---------------------------------------------------------------------------
 
-export async function getTodayEvents() {
-  return apiFetch('/calendar/today')
-}
-
-export async function getWeekEvents() {
-  return apiFetch('/calendar/week')
-}
-
 /** Whether the signed-in user has linked their Google Calendar. */
 export async function getCalendarConnection() {
   return apiFetch('/calendar/connection')

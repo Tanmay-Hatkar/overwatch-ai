@@ -71,7 +71,10 @@ ICP in one sentence: **Someone who writes a to-do list every morning and stops l
 
 ## 7. What it is NOT
 
-- Not a calendar — Google Calendar exists, we read from it
+- Not a calendar — Google Calendar exists, we read from it (see ADR-0022:
+  the UI briefly grew a full calendar grid on the home screen; it was
+  removed to keep this line true. Calendar is background context for the
+  morning briefing, not a screen.)
 - Not a to-do app — those exist too
 - Not Motion / Reclaim — built for executives at peak productivity, wrong audience
 - Not Habitica — streaks are tyranny

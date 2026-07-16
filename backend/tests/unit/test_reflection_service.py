@@ -10,7 +10,7 @@ import site in reflection_service. Tests cover:
   - Caching (hit/miss, strict `>` freshness, force_regenerate)
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from uuid import uuid4
 from unittest.mock import patch
 
@@ -143,7 +143,14 @@ def test_untouched_recurring_commitment_stays_open(
 ) -> None:
     """A recurring commitment that was NOT touched today doesn't trigger the
     roll-forward heuristic — it's just an ordinary open item."""
-    future = datetime.now(UTC) + timedelta(hours=1)
+    # Clamp to the same UTC calendar day as "now", not a flat +1h offset.
+    # _is_recurring_rollforward_today keys off due_at.date() > today (UTC) —
+    # a plain +1h offset crosses into tomorrow's UTC date for roughly the
+    # last hour of every UTC day, which made this test flaky in exactly that
+    # window (misclassifying a freshly-created item as "already rolled
+    # forward" purely from the UTC boundary, not from real roll-forward).
+    now = datetime.now(UTC)
+    future = min(now + timedelta(hours=1), datetime.combine(now.date(), time(23, 59, 59), tzinfo=UTC))
     service.create(
         UID, CommitmentCreate(text="Night routine", due_at=future, recurrence=Recurrence.DAILY)
     )

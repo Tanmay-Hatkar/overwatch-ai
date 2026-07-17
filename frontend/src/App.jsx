@@ -7,7 +7,6 @@ import LoginScreen from './components/LoginScreen'
 import PushSetup from './components/PushSetup'
 import ReflectionCard from './components/ReflectionCard'
 import SettingsPanel from './components/SettingsPanel'
-import WeeklyCalendar from './components/WeeklyCalendar'
 // CommitmentForm, NotificationStatus, StatsBar are intentionally not
 // rendered right now — see the comment on <main>. Their components still
 // live in src/components/ for when we bring them back.
@@ -199,11 +198,13 @@ function Overwatch() {
           </div>
         </header>
 
-        {/* Main view: briefing → weekly calendar → commitments → push toggle.
-            The chat bar at the bottom is the primary way to add commitments,
-            so the structured form and floating stats bar are hidden. The
-            calendar shows an empty week in production until per-user Google
-            Calendar OAuth ships (avoiding the old mock-data look). */}
+        {/* Main view: briefing → commitments → push toggle. The chat bar at
+            the bottom is the primary way to add commitments, so the
+            structured form and floating stats bar are hidden. There is no
+            calendar grid here on purpose — Overwatch is not a calendar (see
+            PRD "What it is NOT"); Google Calendar is read in the background
+            as context for the morning briefing only. Connect/disconnect
+            lives in Settings. */}
         <main className="space-y-6">
           <BriefingCard refreshTrigger={commitmentsVersion} />
 
@@ -211,11 +212,6 @@ function Overwatch() {
               no time-of-day gating). Shows what happened today so far and
               asks about anything still open, rather than reporting on it. */}
           <ReflectionCard refreshTrigger={commitmentsVersion} />
-
-          <WeeklyCalendar
-            commitments={commitments}
-            refreshTrigger={commitmentsVersion}
-          />
 
           {loading ? (
             <p className="text-zinc-600 italic text-sm">Loading…</p>

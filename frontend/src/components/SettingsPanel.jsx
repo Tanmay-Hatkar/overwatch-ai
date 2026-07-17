@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { getSetting, setSetting, POLL_INTERVAL_PRESETS } from '../lib/settings'
 import { sendTestNotification, notificationsAreNative } from '../lib/notifications'
 import { isProactiveVoiceEnabled, setProactiveVoiceEnabled } from '../lib/proactiveVoice'
+import CalendarConnection from './CalendarConnection'
 import {
   isRingEscalationEnabled,
   setRingEscalationEnabled,
@@ -225,6 +226,8 @@ export default function SettingsPanel({ open, onClose }) {
               quicker notifications, slightly more CPU.
             </p>
           </section>
+
+          <CalendarConnection />
 
           {/* Install hint */}
           <section>

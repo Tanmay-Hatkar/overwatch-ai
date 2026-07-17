@@ -10,7 +10,7 @@ import site in reflection_service. Tests cover:
   - Caching (hit/miss, strict `>` freshness, force_regenerate)
 """
 
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, time
 from uuid import uuid4
 from unittest.mock import patch
 
@@ -25,6 +25,12 @@ from app.services.reflection_service import ReflectionGenerationError, Reflectio
 LLM_PATCH_TARGET = "app.services.reflection_service.call_llm"
 
 UID = uuid4()
+
+
+def _today_at_noon_utc() -> datetime:
+    """A stable, deterministic 'today, mid-day' timestamp — see the
+    roll-forward tests below for why this beats an offset from live now()."""
+    return datetime.combine(datetime.now(UTC).date(), time(12, 0), tzinfo=UTC)
 
 
 @pytest.fixture
@@ -125,7 +131,14 @@ def test_recurring_rollforward_counts_as_done_today(
     """A recurring commitment completed today rolls forward and stays OPEN
     with a future due_at (ADR-0015) — the reflection's heuristic counts it
     as done-today rather than showing it as an untouched open item."""
-    due = datetime.now(UTC) - timedelta(hours=1)
+    # Anchored to "today at noon UTC", not an offset from live "now". A
+    # relative offset (e.g. now-1h) only guarantees the rolled-forward
+    # due_at (+1 day) is chronologically later than "now" — not that its
+    # *calendar date* is later than "today". Near UTC midnight those are
+    # different things: now-1h + 1 day can still land on today's date,
+    # making the roll-forward heuristic (due_at.date() > today) miss it.
+    # Noon UTC today + 1 day is unconditionally tomorrow, any time of day.
+    due = _today_at_noon_utc()
     c = service.create(
         UID, CommitmentCreate(text="Night routine", due_at=due, recurrence=Recurrence.DAILY)
     )
@@ -143,14 +156,10 @@ def test_untouched_recurring_commitment_stays_open(
 ) -> None:
     """A recurring commitment that was NOT touched today doesn't trigger the
     roll-forward heuristic — it's just an ordinary open item."""
-    # Clamp to the same UTC calendar day as "now", not a flat +1h offset.
-    # _is_recurring_rollforward_today keys off due_at.date() > today (UTC) —
-    # a plain +1h offset crosses into tomorrow's UTC date for roughly the
-    # last hour of every UTC day, which made this test flaky in exactly that
-    # window (misclassifying a freshly-created item as "already rolled
-    # forward" purely from the UTC boundary, not from real roll-forward).
-    now = datetime.now(UTC)
-    future = min(now + timedelta(hours=1), datetime.combine(now.date(), time(23, 59, 59), tzinfo=UTC))
+    # Same anchor as above: noon UTC today is unconditionally NOT past
+    # today's date, so the heuristic's due_at.date() > today check reliably
+    # comes back False, regardless of what time of day the test runs.
+    future = _today_at_noon_utc()
     service.create(
         UID, CommitmentCreate(text="Night routine", due_at=future, recurrence=Recurrence.DAILY)
     )

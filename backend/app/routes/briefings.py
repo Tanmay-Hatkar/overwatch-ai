@@ -23,6 +23,7 @@ from app.routes.calendar import get_calendar_service
 from app.services.briefing_service import BriefingGenerationError, BriefingService
 from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
+from app.services.timezone_utils import resolve_timezone
 
 router = APIRouter(prefix="/briefings", tags=["briefings"])
 
@@ -53,6 +54,7 @@ def _build_briefing_service(
 @router.get("/today", response_model=BriefingResponse)
 def get_today_briefing(
     force_regenerate: bool = False,
+    timezone: str | None = None,
     user: UserResponse = Depends(current_user),
     service: BriefingService = Depends(_build_briefing_service),
 ) -> BriefingResponse:
@@ -64,11 +66,17 @@ def get_today_briefing(
     `?force_regenerate=true` to bypass the cache and call the LLM
     regardless.
 
+    `?timezone=` is the browser's IANA timezone name (e.g.
+    'America/Toronto') — determines what "today" means. Defaults to UTC
+    if omitted.
+
     Returns 200 with the briefing, or 503 if the LLM is unavailable
     when a fresh generation is needed.
     """
     try:
-        return service.get_today(user.id, force_regenerate=force_regenerate)
+        return service.get_today(
+            user.id, force_regenerate=force_regenerate, user_tz=resolve_timezone(timezone)
+        )
     except BriefingGenerationError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

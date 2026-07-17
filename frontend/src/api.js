@@ -23,6 +23,21 @@ export function apiBase() {
 }
 
 /**
+ * The browser's IANA timezone (e.g. "America/Toronto"), or undefined if
+ * Intl isn't available (very old browser). Used anywhere the backend needs
+ * to know what "today" means for this user — chat, briefings, reflections —
+ * rather than defaulting to UTC, which is wrong for most users most of the
+ * day (see ADR-0023's follow-up on the UTC date-bucketing bug).
+ */
+function getBrowserTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Wrapped fetch with a stable base URL prefix.
  *
  * Web: relies on the session cookie (credentials: 'include').
@@ -118,8 +133,12 @@ export async function deleteCommitment(id) {
 // ---------------------------------------------------------------------------
 
 export async function getTodayBriefing(force = false) {
-  const path = force ? '/briefings/today?force_regenerate=true' : '/briefings/today'
-  return apiFetch(path)
+  const params = new URLSearchParams()
+  if (force) params.set('force_regenerate', 'true')
+  const tz = getBrowserTimezone()
+  if (tz) params.set('timezone', tz)
+  const qs = params.toString()
+  return apiFetch(`/briefings/today${qs ? `?${qs}` : ''}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +146,12 @@ export async function getTodayBriefing(force = false) {
 // ---------------------------------------------------------------------------
 
 export async function getTodayReflection(force = false) {
-  const path = force ? '/reflections/today?force_regenerate=true' : '/reflections/today'
-  return apiFetch(path)
+  const params = new URLSearchParams()
+  if (force) params.set('force_regenerate', 'true')
+  const tz = getBrowserTimezone()
+  if (tz) params.set('timezone', tz)
+  const qs = params.toString()
+  return apiFetch(`/reflections/today${qs ? `?${qs}` : ''}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -186,19 +209,9 @@ export async function sendTestPush() {
 // ---------------------------------------------------------------------------
 
 export async function sendChat(message, history = []) {
-  // Send the browser's IANA timezone (e.g. "America/Toronto") so the
-  // assistant resolves "today", "tonight", and relative times against the
-  // user's local clock rather than the server's. Guarded in case a very old
-  // browser lacks Intl support.
-  let timezone
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-  } catch {
-    timezone = undefined
-  }
   return apiFetch('/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, history, timezone }),
+    body: JSON.stringify({ message, history, timezone: getBrowserTimezone() }),
   })
 }
 

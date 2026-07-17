@@ -9,7 +9,7 @@ The LLM is mocked at the import site in briefing_service. Tests cover:
   - Prompt construction (commitment text appears in the user prompt)
 """
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 from unittest.mock import patch
 
@@ -72,8 +72,12 @@ def test_strips_whitespace_from_briefing_content(briefing_service: BriefingServi
 
 
 def _today_at(hour: int) -> datetime:
-    """Helper: a datetime today at the given hour."""
-    return datetime.combine(date.today(), datetime.min.time().replace(hour=hour))
+    """Helper: a UTC-aware datetime today (UTC calendar date) at the given
+    hour. UTC-anchored, not server-local — BriefingService buckets 'today'
+    against the caller's timezone (UTC when none is passed, as here), so a
+    naive/local-date fixture would silently disagree with it on any
+    non-UTC machine (see ADR-0023's timezone-bucketing follow-up)."""
+    return datetime.combine(datetime.now(UTC).date(), datetime.min.time().replace(hour=hour), tzinfo=UTC)
 
 
 def test_buckets_today_commitments(
@@ -96,7 +100,7 @@ def test_buckets_overdue_commitments(
     briefing_service: BriefingService, service: CommitmentService
 ) -> None:
     """Commitments with due_at before today are overdue."""
-    yesterday = datetime.now() - timedelta(days=1)
+    yesterday = datetime.now(UTC) - timedelta(days=1)
     service.create(UID, CommitmentCreate(text="Old task", due_at=yesterday))
 
     with patch(LLM_PATCH_TARGET, return_value="briefing"):
@@ -141,7 +145,7 @@ def test_excludes_future_commitments(
     briefing_service: BriefingService, service: CommitmentService
 ) -> None:
     """Commitments due tomorrow or later don't appear in today's briefing."""
-    tomorrow = datetime.now() + timedelta(days=1)
+    tomorrow = datetime.now(UTC) + timedelta(days=1)
     service.create(UID, CommitmentCreate(text="Tomorrow task", due_at=tomorrow))
 
     with patch(LLM_PATCH_TARGET, return_value="briefing"):

@@ -24,6 +24,7 @@ from app.repositories.reflection_repository import ReflectionRepository
 from app.routes.auth import current_user
 from app.services.commitment_service import CommitmentService
 from app.services.reflection_service import ReflectionGenerationError, ReflectionService
+from app.services.timezone_utils import resolve_timezone
 
 router = APIRouter(prefix="/reflections", tags=["reflections"])
 
@@ -50,6 +51,7 @@ def _build_reflection_service(
 @router.get("/today", response_model=ReflectionResponse)
 def get_today_reflection(
     force_regenerate: bool = False,
+    timezone: str | None = None,
     user: UserResponse = Depends(current_user),
     service: ReflectionService = Depends(_build_reflection_service),
 ) -> ReflectionResponse:
@@ -61,11 +63,17 @@ def get_today_reflection(
     `?force_regenerate=true` to bypass the cache and call the LLM
     regardless.
 
+    `?timezone=` is the browser's IANA timezone name (e.g.
+    'America/Toronto') — determines what "today" means. Defaults to UTC
+    if omitted.
+
     Returns 200 with the reflection, or 503 if the LLM is unavailable
     when a fresh generation is needed.
     """
     try:
-        return service.get_today(user.id, force_regenerate=force_regenerate)
+        return service.get_today(
+            user.id, force_regenerate=force_regenerate, user_tz=resolve_timezone(timezone)
+        )
     except ReflectionGenerationError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

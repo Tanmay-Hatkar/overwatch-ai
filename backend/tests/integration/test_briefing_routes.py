@@ -6,7 +6,7 @@ unit tests mock it). The route + service + repository + DB chain runs
 for real otherwise.
 """
 
-from datetime import date, datetime
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -36,7 +36,10 @@ def test_get_today_returns_503_when_llm_unavailable(authed_client: TestClient) -
 
 def test_get_today_includes_commitment_counts(authed_client: TestClient) -> None:
     """Counts in the response match commitments in the database."""
-    today_noon = datetime.combine(date.today(), datetime.min.time().replace(hour=12))
+    # UTC-anchored, not server-local: /briefings/today defaults to UTC when
+    # no ?timezone= is passed (as here), so the fixture must agree with that
+    # reference clock or it silently mismatches on a non-UTC machine.
+    today_noon = datetime.combine(datetime.now(UTC).date(), datetime.min.time().replace(hour=12), tzinfo=UTC)
     authed_client.post(
         "/commitments",
         json={"text": "Today's task", "due_at": today_noon.isoformat()},

@@ -29,7 +29,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from app.agents.orchestrator import call_llm
 from app.config import settings
@@ -55,6 +55,7 @@ from app.prompts.stale_check_reply import (
 from app.repositories.conversation_repository import ConversationRepository
 from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
+from app.services.timezone_utils import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class ChatService:
 
     def handle(self, user_id: UUID, request: ChatRequest) -> ChatResponse:
         """Process one chat message end-to-end, scoped to user_id."""
-        user_tz = self._resolve_timezone(request.timezone)
+        user_tz = resolve_timezone(request.timezone)
         now_local = datetime.now(user_tz)
 
         # Stale-plan check-in interception (ADR-0017): if the user has any
@@ -145,22 +146,6 @@ class ChatService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _resolve_timezone(tz_name: str | None) -> ZoneInfo:
-        """
-        Turn the browser-supplied IANA timezone name into a ZoneInfo.
-
-        Falls back to UTC if the name is missing or unrecognized — the
-        server's clock is reliable (NTP); the only thing we don't know
-        without the client is which wall clock to render it against.
-        """
-        if tz_name:
-            try:
-                return ZoneInfo(tz_name)
-            except (ZoneInfoNotFoundError, ValueError):
-                logger.warning("chat: unknown timezone %r, defaulting to UTC", tz_name)
-        return ZoneInfo("UTC")
 
     def _build_user_prompt(
         self,

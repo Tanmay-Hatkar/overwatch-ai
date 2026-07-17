@@ -22,6 +22,7 @@ commitment mutation triggers regeneration, or the user hits "refresh"
 import logging
 from datetime import UTC, date, datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from app.agents.orchestrator import call_llm
 from app.models.briefing import BriefingResponse
@@ -31,6 +32,7 @@ from app.prompts.morning_briefing import SYSTEM_PROMPT, USER_TEMPLATE
 from app.repositories.briefing_repository import BriefingRepository
 from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
+from app.services.timezone_utils import resolve_timezone, to_user_date
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +63,23 @@ class BriefingService:
         # with "(none)" in the events section.
         self._calendar = calendar_service
 
-    def get_today(self, user_id: UUID, force_regenerate: bool = False) -> BriefingResponse:
+    def get_today(
+        self,
+        user_id: UUID,
+        force_regenerate: bool = False,
+        user_tz: ZoneInfo | None = None,
+    ) -> BriefingResponse:
         """
         Get this user's briefing for today — cached if fresh, else regenerated.
 
         Args:
             user_id: Owner of the briefing.
             force_regenerate: If True, skip the cache and always regenerate.
+            user_tz: The user's IANA timezone (from the browser). Determines
+                what "today" means — defaults to UTC if not supplied, which
+                is wrong for any user not near UTC for a large chunk of every
+                day (a commitment due this evening can already be "tomorrow"
+                in UTC). See ADR-0023's follow-up.
 
         Returns:
             BriefingResponse with `cached=True` for cache hits,
@@ -76,7 +88,7 @@ class BriefingService:
         Raises:
             BriefingGenerationError: If the LLM is unavailable when we need it.
         """
-        today = date.today()
+        today = datetime.now(user_tz or resolve_timezone(None)).date()
 
         if not force_regenerate:
             cached = self._repo.get_for_date(user_id, today)
@@ -84,7 +96,7 @@ class BriefingService:
                 logger.info("Returning cached briefing for user %s on %s", user_id, today)
                 return cached
 
-        return self._generate_and_save(user_id, today)
+        return self._generate_and_save(user_id, today, user_tz or resolve_timezone(None))
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -101,10 +113,10 @@ class BriefingService:
             return True
         return cached.generated_at > latest
 
-    def _generate_and_save(self, user_id: UUID, today: date) -> BriefingResponse:
+    def _generate_and_save(self, user_id: UUID, today: date, user_tz: ZoneInfo) -> BriefingResponse:
         """Generate a fresh briefing and persist it (upsert) for this user+date."""
         today_commitments, overdue_commitments, floating_commitments = self._bucket_commitments(
-            user_id, today
+            user_id, today, user_tz
         )
         events = self._fetch_events(today)
 
@@ -154,13 +166,17 @@ class BriefingService:
         return fresh
 
     def _bucket_commitments(
-        self, user_id: UUID, today: date
+        self, user_id: UUID, today: date, user_tz: ZoneInfo
     ) -> tuple[list[CommitmentResponse], list[CommitmentResponse], list[CommitmentResponse]]:
         """
         Split the user's open commitments into 'today', 'overdue', and
         'floating' buckets.
 
-        Today:    open commitments with due_at on today's date.
+        Today:    open commitments with due_at on today's date (in the
+                  user's timezone — due_at is stored UTC-aware, so this is
+                  converted before comparison; a commitment due this
+                  evening shouldn't fall out of "today" just because it's
+                  already tomorrow in UTC).
         Overdue:  open commitments with due_at before today.
         Floating: open commitments with no due_at at all — today's list,
                   written down without a clock time (ADR-0023). These used
@@ -179,7 +195,7 @@ class BriefingService:
             if c.due_at is None:
                 floating_bucket.append(c)
                 continue
-            due_date = c.due_at.date()
+            due_date = to_user_date(c.due_at, user_tz)
             if due_date == today:
                 today_bucket.append(c)
             elif due_date < today:

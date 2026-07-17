@@ -33,6 +33,7 @@ only the latest roll-forward state).
 import logging
 from datetime import UTC, date, datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from app.agents.orchestrator import call_llm
 from app.models.commitment import CommitmentResponse, CommitmentStatus, Recurrence
@@ -40,6 +41,7 @@ from app.models.reflection import ReflectionResponse
 from app.prompts.evening_reflection import SYSTEM_PROMPT, USER_TEMPLATE
 from app.repositories.reflection_repository import ReflectionRepository
 from app.services.commitment_service import CommitmentService
+from app.services.timezone_utils import resolve_timezone, to_user_date
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +67,25 @@ class ReflectionService:
         self._service = commitment_service
         self._repo = repository
 
-    def get_today(self, user_id: UUID, force_regenerate: bool = False) -> ReflectionResponse:
+    def get_today(
+        self,
+        user_id: UUID,
+        force_regenerate: bool = False,
+        user_tz: ZoneInfo | None = None,
+    ) -> ReflectionResponse:
         """
         Get this user's reflection for today — cached if fresh, else regenerated.
 
         Args:
             user_id: Owner of the reflection.
             force_regenerate: If True, skip the cache and always regenerate.
+            user_tz: The user's IANA timezone (from the browser). Determines
+                what "today" means, and what calendar day `updated_at`/
+                `due_at` (both stored UTC-aware) land on when bucketing —
+                defaults to UTC if not supplied. Previously this was
+                hardcoded to UTC regardless of the caller, which silently
+                misbucketed anything touched in the evening for any user
+                not near UTC (see ADR-0023's follow-up).
 
         Returns:
             ReflectionResponse with `cached=True` for cache hits,
@@ -81,12 +95,8 @@ class ReflectionService:
             ReflectionGenerationError: If the LLM is unavailable when we
                 need it.
         """
-        # UTC, not local server date: unlike the morning briefing (which only
-        # ever compares against due_at, whatever timezone the caller passed
-        # in), the reflection buckets by `updated_at`, which the repository
-        # always stamps in UTC. Using the local server date here would drift
-        # bucketing whenever the server's system timezone isn't UTC.
-        today = datetime.now(UTC).date()
+        tz = user_tz or resolve_timezone(None)
+        today = datetime.now(tz).date()
 
         if not force_regenerate:
             cached = self._repo.get_for_date(user_id, today)
@@ -94,7 +104,7 @@ class ReflectionService:
                 logger.info("Returning cached reflection for user %s on %s", user_id, today)
                 return cached
 
-        return self._generate_and_save(user_id, today)
+        return self._generate_and_save(user_id, today, tz)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -111,9 +121,9 @@ class ReflectionService:
             return True
         return cached.generated_at > latest
 
-    def _generate_and_save(self, user_id: UUID, today: date) -> ReflectionResponse:
+    def _generate_and_save(self, user_id: UUID, today: date, user_tz: ZoneInfo) -> ReflectionResponse:
         """Generate a fresh reflection and persist it (upsert) for this user+date."""
-        done_today, still_open, abandoned_today = self._bucket_commitments(user_id, today)
+        done_today, still_open, abandoned_today = self._bucket_commitments(user_id, today, user_tz)
 
         user_prompt = USER_TEMPLATE.format(
             today_name=today.strftime("%A"),
@@ -153,12 +163,16 @@ class ReflectionService:
         return fresh
 
     def _bucket_commitments(
-        self, user_id: UUID, today: date
+        self, user_id: UUID, today: date, user_tz: ZoneInfo
     ) -> tuple[list[CommitmentResponse], list[CommitmentResponse], list[CommitmentResponse]]:
         """
         Partition the user's commitments into done-today, still-open, and
         abandoned-today buckets for the reflection. See module docstring for
         the recurring roll-forward heuristic.
+
+        `updated_at`/`due_at` are stored UTC-aware; converted to `user_tz`
+        before taking `.date()` so "today" means the user's calendar day,
+        not UTC's.
         """
         all_commitments = self._service.list(user_id)
 
@@ -167,13 +181,13 @@ class ReflectionService:
         abandoned_today: list[CommitmentResponse] = []
 
         for c in all_commitments:
-            touched_today = c.updated_at.date() == today
+            touched_today = to_user_date(c.updated_at, user_tz) == today
             if c.status == CommitmentStatus.DONE and touched_today:
                 done_today.append(c)
             elif c.status == CommitmentStatus.ABANDONED and touched_today:
                 abandoned_today.append(c)
             elif c.status == CommitmentStatus.OPEN:
-                if self._is_recurring_rollforward_today(c, today, touched_today):
+                if self._is_recurring_rollforward_today(c, today, touched_today, user_tz):
                     done_today.append(c)
                 else:
                     still_open.append(c)
@@ -182,7 +196,7 @@ class ReflectionService:
 
     @staticmethod
     def _is_recurring_rollforward_today(
-        c: CommitmentResponse, today: date, touched_today: bool
+        c: CommitmentResponse, today: date, touched_today: bool, user_tz: ZoneInfo
     ) -> bool:
         """
         Heuristic: a recurring commitment touched today whose due_at now
@@ -193,7 +207,7 @@ class ReflectionService:
             c.recurrence != Recurrence.NONE
             and touched_today
             and c.due_at is not None
-            and c.due_at.date() > today
+            and to_user_date(c.due_at, user_tz) > today
         )
 
     @staticmethod

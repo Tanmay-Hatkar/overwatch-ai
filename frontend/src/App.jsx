@@ -7,9 +7,6 @@ import LoginScreen from './components/LoginScreen'
 import PushSetup from './components/PushSetup'
 import ReflectionCard from './components/ReflectionCard'
 import SettingsPanel from './components/SettingsPanel'
-// CommitmentForm, NotificationStatus, StatsBar are intentionally not
-// rendered right now — see the comment on <main>. Their components still
-// live in src/components/ for when we bring them back.
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useReminders } from './hooks/useReminders'
 import { listCommitments } from './api'
@@ -165,12 +162,14 @@ function Overwatch() {
 
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-[#f5f5f5]">
-      {/* Width: full on mobile, 70% of viewport on desktop, capped at 1280px so
-          it doesn't sprawl on ultrawide monitors. paddingBottom is set
-          dynamically from the measured ChatBar height (plus a small buffer)
-          so content behind the chat is always reachable on any viewport. */}
+      {/* Mobile-first width, full stop (ADR-0023) — no desktop-width
+          breakpoint. Overwatch's primary target is the native Android app;
+          a phone-width single column is the baseline on every screen size,
+          not just small ones. paddingBottom is set dynamically from the
+          measured ChatBar height (plus a small buffer) so content behind
+          the chat is always reachable. */}
       <div
-        className="ow-fade-in w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 py-8"
+        className="ow-fade-in w-full max-w-md mx-auto px-4 py-8"
         style={{
           // Add the device's top safe-area inset so the header clears the
           // status bar on native (Capacitor) / standalone PWA fullscreen.
@@ -198,13 +197,16 @@ function Overwatch() {
           </div>
         </header>
 
-        {/* Main view: briefing → commitments → push toggle. The chat bar at
-            the bottom is the primary way to add commitments, so the
-            structured form and floating stats bar are hidden. There is no
-            calendar grid here on purpose — Overwatch is not a calendar (see
-            PRD "What it is NOT"); Google Calendar is read in the background
-            as context for the morning briefing only. Connect/disconnect
-            lives in Settings. */}
+        {/* Main view: briefing → reflection → commitments → push toggle. The
+            chat bar at the bottom is the only way to add or modify
+            commitments (ADR-0023 — no structured form, no inline reschedule,
+            no groups: chat is the single capture/modify channel). There is
+            no calendar grid here on purpose — Overwatch is not a calendar
+            (see PRD "What it is NOT"); Google Calendar is read in the
+            background as context for the morning briefing only.
+            Connect/disconnect lives in Settings. Stats/streaks were built
+            and deliberately removed (ADR-0023) — they contradict the "no
+            streak tyranny" principle (PRD §5). */}
         <main className="space-y-6">
           <BriefingCard refreshTrigger={commitmentsVersion} />
 
@@ -216,7 +218,19 @@ function Overwatch() {
           {loading ? (
             <p className="text-zinc-600 italic text-sm">Loading…</p>
           ) : error ? (
-            <p className="text-red-500 text-sm">Error: {error}</p>
+            <div className="flex items-center justify-between gap-3 bg-[#141414] border border-red-900/40 rounded-2xl p-5">
+              <p className="text-sm text-zinc-400">
+                {error.includes('Failed to fetch')
+                  ? "Can't reach Overwatch right now — check your connection."
+                  : "Couldn't load your list just now."}
+              </p>
+              <button
+                onClick={refresh}
+                className="shrink-0 text-[10px] uppercase tracking-widest text-orange-500 hover:text-orange-400 transition-colors"
+              >
+                try again
+              </button>
+            </div>
           ) : (
             <CommitmentList commitments={commitments} onChange={refresh} />
           )}
@@ -283,21 +297,24 @@ function UserBadge({ user, onLogout }) {
         )}
       </button>
       {open && (
-        <div
-          className="absolute right-0 mt-2 w-48 bg-[#141414] border border-white/[0.06] rounded-lg shadow-lg overflow-hidden z-50"
-          onMouseLeave={() => setOpen(false)}
-        >
-          <div className="px-3 py-2 border-b border-white/[0.06]">
-            <p className="text-sm text-zinc-200 truncate">{user.name}</p>
-            <p className="text-[11px] text-zinc-500 truncate">{user.email}</p>
+        <>
+          {/* Tap-outside-to-close backdrop — onMouseLeave alone never fires
+              on touch, so without this the menu would stay open until the
+              avatar is tapped again (mobile-first, ADR-0023). */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-48 bg-[#141414] border border-white/[0.06] rounded-lg shadow-lg overflow-hidden z-50">
+            <div className="px-3 py-2 border-b border-white/[0.06]">
+              <p className="text-sm text-zinc-200 truncate">{user.name}</p>
+              <p className="text-[11px] text-zinc-500 truncate">{user.email}</p>
+            </div>
+            <button
+              onClick={onLogout}
+              className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-white/[0.04] hover:text-red-400 transition-colors"
+            >
+              Sign out
+            </button>
           </div>
-          <button
-            onClick={onLogout}
-            className="w-full text-left px-3 py-2 text-sm text-zinc-300 hover:bg-white/[0.04] hover:text-red-400 transition-colors"
-          >
-            Sign out
-          </button>
-        </div>
+        </>
       )}
     </div>
   )

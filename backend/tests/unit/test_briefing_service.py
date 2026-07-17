@@ -56,6 +56,7 @@ def test_generates_briefing_with_no_commitments(briefing_service: BriefingServic
     assert result.content == "Good morning. Nothing today."
     assert result.today_count == 0
     assert result.overdue_count == 0
+    assert result.floating_count == 0
 
 
 def test_strips_whitespace_from_briefing_content(briefing_service: BriefingService) -> None:
@@ -105,17 +106,22 @@ def test_buckets_overdue_commitments(
     assert result.overdue_count == 1
 
 
-def test_excludes_commitments_without_due_at(
+def test_floating_commitments_counted_separately(
     briefing_service: BriefingService, service: CommitmentService
 ) -> None:
-    """Floating commitments (no due_at) don't appear in either bucket."""
+    """Floating commitments (no due_at) don't count as today/overdue, but
+    are surfaced via their own floating_count (ADR-0023) — they used to be
+    silently excluded from the briefing entirely."""
     service.create(UID, CommitmentCreate(text="Sometime task", due_at=None))
 
-    with patch(LLM_PATCH_TARGET, return_value="briefing"):
+    with patch(LLM_PATCH_TARGET, return_value="briefing") as mock:
         result = briefing_service.generate_today(UID)
 
     assert result.today_count == 0
     assert result.overdue_count == 0
+    assert result.floating_count == 1
+    user_prompt = mock.call_args.kwargs["user_prompt"]
+    assert "Sometime task" in user_prompt
 
 
 def test_excludes_done_commitments(

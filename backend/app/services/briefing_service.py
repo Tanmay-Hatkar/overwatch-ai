@@ -103,7 +103,9 @@ class BriefingService:
 
     def _generate_and_save(self, user_id: UUID, today: date) -> BriefingResponse:
         """Generate a fresh briefing and persist it (upsert) for this user+date."""
-        today_commitments, overdue_commitments = self._bucket_commitments(user_id, today)
+        today_commitments, overdue_commitments, floating_commitments = self._bucket_commitments(
+            user_id, today
+        )
         events = self._fetch_events(today)
 
         user_prompt = USER_TEMPLATE.format(
@@ -113,6 +115,8 @@ class BriefingService:
             today_commitments=self._format_list(today_commitments),
             overdue_count=len(overdue_commitments),
             overdue_commitments=self._format_list(overdue_commitments),
+            floating_count=len(floating_commitments),
+            floating_commitments=self._format_list(floating_commitments),
             events_count=len(events),
             events=self._format_events(events),
         )
@@ -129,6 +133,7 @@ class BriefingService:
             content=raw.strip(),
             today_count=len(today_commitments),
             overdue_count=len(overdue_commitments),
+            floating_count=len(floating_commitments),
             # Use UTC to match CommitmentRepository's storage convention.
             # Comparing naive vs aware datetimes raises TypeError.
             generated_at=datetime.now(UTC),
@@ -141,30 +146,38 @@ class BriefingService:
         self._repo.save(user_id, fresh, today)
 
         logger.info(
-            "Generated briefing for user %s on %s: %d today, %d overdue, %d chars",
-            user_id, today, len(today_commitments), len(overdue_commitments), len(raw),
+            "Generated briefing for user %s on %s: %d today, %d overdue, %d floating, %d chars",
+            user_id, today, len(today_commitments), len(overdue_commitments),
+            len(floating_commitments), len(raw),
         )
 
         return fresh
 
     def _bucket_commitments(
         self, user_id: UUID, today: date
-    ) -> tuple[list[CommitmentResponse], list[CommitmentResponse]]:
+    ) -> tuple[list[CommitmentResponse], list[CommitmentResponse], list[CommitmentResponse]]:
         """
-        Split the user's open commitments into 'today' and 'overdue' buckets.
+        Split the user's open commitments into 'today', 'overdue', and
+        'floating' buckets.
 
         Today:    open commitments with due_at on today's date.
         Overdue:  open commitments with due_at before today.
-        Excluded: commitments without due_at (floating), future due dates,
-                  and done/abandoned items.
+        Floating: open commitments with no due_at at all — today's list,
+                  written down without a clock time (ADR-0023). These used
+                  to be silently excluded from the briefing entirely; now
+                  they're surfaced as their own section so a day planned
+                  without exact times still gets talked back to.
+        Excluded: future due dates, and done/abandoned items.
         """
         all_open = self._service.list(user_id, status=CommitmentStatus.OPEN)
 
         today_bucket: list[CommitmentResponse] = []
         overdue_bucket: list[CommitmentResponse] = []
+        floating_bucket: list[CommitmentResponse] = []
 
         for c in all_open:
             if c.due_at is None:
+                floating_bucket.append(c)
                 continue
             due_date = c.due_at.date()
             if due_date == today:
@@ -172,7 +185,7 @@ class BriefingService:
             elif due_date < today:
                 overdue_bucket.append(c)
 
-        return today_bucket, overdue_bucket
+        return today_bucket, overdue_bucket, floating_bucket
 
     @staticmethod
     def _format_list(commitments: list[CommitmentResponse]) -> str:

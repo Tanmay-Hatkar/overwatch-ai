@@ -1,7 +1,7 @@
 # Product Requirements Document — Overwatch
 
 **Status:** Draft (active development)
-**Last updated:** 2026-05-12
+**Last updated:** 2026-07-15 (v1 refocus — see ADR-0023)
 **Owner:** Tanmay Hatkar
 
 ---
@@ -69,6 +69,20 @@ Not the executive chasing 10× productivity. The student cramming, the job seeke
 
 ICP in one sentence: **Someone who writes a to-do list every morning and stops looking at it by 11am.**
 
+**Mobile-first, as of the v1 refocus (ADR-0023).** The struggler this is for
+lives on their phone, not at a desk with a browser tab open. The native
+Android app (Capacitor-wrapped) is the primary product; the web SPA is the
+shell it wraps, not a desktop destination in its own right. Design and
+build decisions default to mobile unless a reason is stated.
+
+Positioning note, sharpened after a competitive pass (see ADR-0023): the
+gap this fills isn't "no other app reminds you of things" — several do.
+It's the combination nobody else has: a stale-plan check-in that asks
+**once**, resolved conversationally, with zero penalty either way — sitting
+between plain to-do apps (too soft, gets ignored) and financial-stakes
+commitment-device apps like Beeminder/TaskRatchet (effective, but punitive,
+and wrong tone for someone already struggling).
+
 ## 7. What it is NOT
 
 - Not a calendar — Google Calendar exists, we read from it (see ADR-0022:
@@ -89,35 +103,65 @@ That's the kernel. Everything else — morning briefs, rate goal tracking, stale
 
 ## 9. Scope
 
-### In scope for v1 (MVP)
+**Revised 2026-07-15 (ADR-0023).** The original v1 scope below (drafted
+2026-05-12) undersold what actually got built — auth, multi-tenancy, and a
+native mobile app all shipped before this revision — and included a
+calendar-UI direction that turned out to work against the product's own
+positioning. This section reflects where the product actually stands and
+where it's deliberately headed next, not the original MVP guess.
 
-- Personal-use system for the author
-- Single user (no multi-tenancy)
-- Google Calendar integration (read-only initially; later write)
+### In scope for v1
+
+- **Mobile-first.** The native Android app is the primary target; the web
+  SPA is mobile-width by default, not a desktop layout.
+- Single active user in practice today; auth + multi-tenant data scoping
+  exist in the codebase (ADR-0013) but are not exposed as a public product
+  yet — see "Deferred," below.
 - Local + cloud LLM via fallback chain (OpenAI → Groq → Ollama)
-- Conversational input (text first; voice as augmentation)
-- Commitment capture + surgical follow-up
-- Morning brief, evening reflection
-- Rate-goal tracking
-- Stale plan detection
+- Conversational input: text and voice, both first-class (voice is no
+  longer "augmentation" — native STT/TTS shipped and are load-bearing)
+- Commitment capture + surgical, exactly-timed follow-up
+- Morning brief, evening reflection — the daily bookending ritual
+- Rate-goal tracking with agency-preserving renegotiation
+- Stale-plan detection (one-time, conversational, ADR-0017)
+- Reminder escalation for ignored reminders (ring alarm, ADR-0019)
+- Home-screen widget (ADR-0020)
 
 ### Out of scope for v1
 
-- Multi-user / multi-tenant
-- Auth / accounts
-- Multiple calendar providers (Outlook, Apple)
-- Mobile app
-- Public sharing / SaaS
-- Production deployment beyond personal use
-- Advanced analytics / insights
+- **Calendar as a visible screen.** Google Calendar is read-only
+  background context for the morning briefing only — never a UI surface
+  again (ADR-0022).
+- **List-management ceremony:** groups/sections, manual reschedule-from-list.
+  Cut as friction that doesn't serve the core loop (ADR-0023).
+- **Completion stats / streaks.** Built, then deliberately removed — direct
+  contradiction of principle #3 ("no streak tyranny," §5) if ever shipped
+  (ADR-0023).
+- Multiple calendar providers (Outlook, Apple) — moot while calendar has no UI
+- Desktop as a first-class target
+- Production hosting for users other than the author
+
+### Deferred (built or partially built, intentionally not turned on)
+
+- **Public / multi-user hosting.** Multi-tenancy exists at the data layer.
+  Turning it into a real product for other strugglers/students is a
+  distinct project — LLM cost-per-user, Google OAuth verification for a
+  public app, app-store distribution — not a flag flip. Revisit once the
+  solo core loop is proven.
+- **Usage-aware proactive intervention** (detecting a distracting app in
+  the foreground and nudging in the moment, rather than only on a
+  clock/staleness trigger). The original motivating idea behind this whole
+  refocus — genuinely compelling, genuinely heavier (Android
+  `UsageStatsManager` / iOS Screen Time entitlements). Shelved, not
+  rejected.
 
 ### Maybe later
 
-- Outlook / Apple calendar via abstraction
-- TTS for voice output
+- Open-source release vs. hosted product, once the "for other users"
+  question above is actually being pursued
+- Outlook / Apple calendar via abstraction, only if calendar ever becomes a
+  feature again
 - Long-term pattern recognition over months of data
-- Desktop notifications / system tray
-- Mobile companion
 
 ## 10. Success criteria (for MVP)
 

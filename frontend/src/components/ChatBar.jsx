@@ -202,7 +202,7 @@ export default function ChatBar({ onAction, onHeightChange }) {
 
       <div ref={containerRef} className="bg-[#0f0f0f] border-t border-white/[0.06] pointer-events-auto">
         <div
-          className="w-full md:w-[70vw] max-w-[1280px] mx-auto px-6 pt-3"
+          className="w-full max-w-md mx-auto px-4 pt-3"
           style={{
             // Clear the home-indicator / gesture bar on native + standalone PWA.
             paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))',

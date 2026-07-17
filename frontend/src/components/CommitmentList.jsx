@@ -12,6 +12,10 @@ import { updateCommitment, deleteCommitment } from '../api'
  *
  * Receives the commitments array and an onChange callback. The callback
  * is invoked after any mutation so the parent can refresh from the API.
+ *
+ * No grouping and no due-time editing from here (ADR-0023) — both are
+ * list-management ceremony that bypassed the chat capture/modify channel.
+ * If a commitment's time needs to change, say so in chat.
  */
 export default function CommitmentList({ commitments, onChange }) {
   const [filter, setFilter] = useState('all')
@@ -45,18 +49,6 @@ export default function CommitmentList({ commitments, onChange }) {
       onChange()
     } catch (err) {
       toast.error(err.message || "Couldn't save edit.")
-    }
-  }
-
-  async function handleReschedule(commitment, isoDueAt) {
-    // isoDueAt is a full UTC ISO string (or already-converted). Sending it
-    // reschedules the commitment; the backend stores UTC, the UI renders local.
-    try {
-      await updateCommitment(commitment.id, { due_at: isoDueAt })
-      toast.success(`Rescheduled: ${commitment.text}`)
-      onChange()
-    } catch (err) {
-      toast.error(err.message || "Couldn't reschedule.")
     }
   }
 
@@ -121,29 +113,17 @@ export default function CommitmentList({ commitments, onChange }) {
         {visibleOpen.length === 0 ? (
           <p className="text-zinc-600 italic text-sm">{emptyMessage}</p>
         ) : (
-          <div className="space-y-4">
-            {groupByName(visibleOpen).map(([groupName, items]) => (
-              <div key={groupName || '__ungrouped'}>
-                {groupName && (
-                  <h4 className="text-[10px] font-semibold tracking-[0.12em] uppercase text-orange-400/70 mb-2">
-                    {groupName} <span className="text-zinc-600">({items.length})</span>
-                  </h4>
-                )}
-                <ul className="space-y-2">
-                  {items.map((c) => (
-                    <CommitmentItem
-                      key={c.id}
-                      commitment={c}
-                      onToggle={() => handleToggleDone(c)}
-                      onDelete={() => handleDelete(c)}
-                      onEdit={(newText) => handleEdit(c, newText)}
-                      onReschedule={(iso) => handleReschedule(c, iso)}
-                    />
-                  ))}
-                </ul>
-              </div>
+          <ul className="space-y-2">
+            {visibleOpen.map((c) => (
+              <CommitmentItem
+                key={c.id}
+                commitment={c}
+                onToggle={() => handleToggleDone(c)}
+                onDelete={() => handleDelete(c)}
+                onEdit={(newText) => handleEdit(c, newText)}
+              />
             ))}
-          </div>
+          </ul>
         )}
       </section>
 
@@ -193,21 +173,11 @@ function FilterButton({ active, onClick, count, children }) {
  * saves (so clicking elsewhere doesn't lose your changes). Empty text on
  * save reverts to original.
  */
-function CommitmentItem({ commitment, onToggle, onDelete, onEdit, onReschedule }) {
+function CommitmentItem({ commitment, onToggle, onDelete, onEdit }) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(commitment.text)
-  const [editingTime, setEditingTime] = useState(false)
   const isDone = commitment.status === 'done'
   const dueInfo = formatDueAt(commitment.due_at, isDone)
-
-  function handleTimeChange(localValue) {
-    setEditingTime(false)
-    if (!localValue) return
-    // datetime-local gives a wall-clock string with no zone; interpret it in
-    // the browser's timezone and convert to a UTC ISO string for storage.
-    const iso = new Date(localValue).toISOString()
-    if (onReschedule) onReschedule(iso)
-  }
 
   async function commitEdit() {
     const trimmed = editText.trim()
@@ -283,27 +253,11 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit, onReschedule }
             )}
           </p>
         )}
-        {/* Due time row — click to reschedule. Open commitments only.
-            Shows a datetime-local picker inline; if there's no due time yet,
-            offers a "+ set time" affordance. */}
-        {editingTime ? (
-          <input
-            type="datetime-local"
-            defaultValue={commitment.due_at ? toLocalInputValue(commitment.due_at) : ''}
-            onChange={(e) => handleTimeChange(e.target.value)}
-            onBlur={() => setEditingTime(false)}
-            autoFocus
-            className="mt-1 bg-[#222] border border-orange-500/60 rounded px-1.5 py-0.5 text-[11px] text-zinc-200 focus:outline-none [color-scheme:dark]"
-          />
-        ) : dueInfo ? (
+        {/* Due time row — read-only. To change a commitment's time, say so
+            in chat (ADR-0023: no inline reschedule UI). */}
+        {dueInfo && (
           <p className="text-[11px] mt-0.5 flex items-center gap-2 flex-wrap">
-            <span
-              onClick={() => !isDone && setEditingTime(true)}
-              className={`${isDone ? '' : 'cursor-pointer hover:text-orange-400'} ${
-                dueInfo.overdue && !isDone ? 'text-red-400' : 'text-zinc-500'
-              }`}
-              title={isDone ? '' : 'Click to reschedule'}
-            >
+            <span className={dueInfo.overdue && !isDone ? 'text-red-400' : 'text-zinc-500'}>
               {dueInfo.label}
             </span>
             {/* Lead-time badge — the reminder shown as a sub-detail of the
@@ -314,15 +268,6 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit, onReschedule }
               </span>
             )}
           </p>
-        ) : (
-          !isDone && (
-            <button
-              onClick={() => setEditingTime(true)}
-              className="mt-0.5 text-[11px] text-zinc-600 hover:text-orange-400 transition-colors"
-            >
-              + set time
-            </button>
-          )
         )}
       </div>
       <button
@@ -336,14 +281,10 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit, onReschedule }
   )
 }
 
-/**
- * Convert a stored UTC ISO datetime into the value a <input type="datetime-local">
- * expects: a local-timezone "YYYY-MM-DDTHH:mm" string (no zone suffix).
- */
-function toLocalInputValue(iso) {
-  const d = new Date(iso)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+/** Humanize a lead time for the 🔔 badge ("15 min", "1 hr", "2 hr"). */
+function formatLead(minutes) {
+  if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} hr`
+  return `${minutes} min`
 }
 
 /**
@@ -354,32 +295,6 @@ function toLocalInputValue(iso) {
  *   - { label, overdue } where label is a short human string and
  *     overdue is true if the due date has passed (used for styling).
  */
-/**
- * Group commitments by group_name for sectioned rendering.
- * Returns [groupName, items][] with ungrouped ('') first, then named
- * groups alphabetically. Preserves each group's incoming item order.
- */
-function groupByName(items) {
-  const map = new Map()
-  for (const c of items) {
-    const key = c.group_name || ''
-    if (!map.has(key)) map.set(key, [])
-    map.get(key).push(c)
-  }
-  const ordered = []
-  if (map.has('')) ordered.push(['', map.get('')])
-  for (const k of [...map.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b))) {
-    ordered.push([k, map.get(k)])
-  }
-  return ordered
-}
-
-/** Humanize a lead time for the 🔔 badge ("15 min", "1 hr", "2 hr"). */
-function formatLead(minutes) {
-  if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} hr`
-  return `${minutes} min`
-}
-
 function formatDueAt(dueAt, isDone) {
   if (!dueAt) return null
 

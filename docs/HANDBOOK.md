@@ -48,11 +48,13 @@ After that, you're not just "familiar" — you can confidently add a feature.
        ┌───────────────────────────────────▼────────────────────────────────────┐
        │                          Frontend (React + Vite)                       │
        │                                                                        │
-       │   App.jsx ─┬─ BriefingCard ─ StatsBar ─ WeeklyCalendar                  │
-       │            ├─ CommitmentList ─ CommitmentForm                           │
+       │   App.jsx ─┬─ BriefingCard ─ ReflectionCard                             │
+       │            ├─ CommitmentList  (the Todos — no groups, no inline edit   │
+       │            │                   of due_at; chat is the only capture/    │
+       │            │                   modify channel, ADR-0023)                │
        │            ├─ ChatBar  (the conversational surface)                     │
-       │            ├─ PushSetup ─ NotificationStatus                            │
-       │            └─ SettingsPanel                                             │
+       │            ├─ PushSetup                                                 │
+       │            └─ SettingsPanel  (incl. optional Calendar connect, ADR-0022)│
        │                                                                        │
        │   sw.js  (Service Worker — push events even when tab is closed)        │
        └───────────────────────────────────┬────────────────────────────────────┘
@@ -62,12 +64,13 @@ After that, you're not just "familiar" — you can confidently add a feature.
        ┌───────────────────────────────────▼────────────────────────────────────┐
        │                       Backend (FastAPI, Python 3.12)                   │
        │                                                                        │
-       │   Routes layer    →  /chat /commitments /briefings /stats              │
-       │   (app/routes/)      /calendar /push /health                           │
+       │   Routes layer    →  /chat /commitments /briefings /reflections        │
+       │   (app/routes/)      /calendar /push /auth /health                     │
        │                                                                        │
        │   Services layer  →  ChatService    BriefingService    PushService     │
-       │   (app/services/)    CommitmentService  CalendarService  StatsService  │
+       │   (app/services/)    CommitmentService  CalendarService                │
        │                      CommitmentParserService  ReminderScheduler        │
+       │                      StaleCheckScheduler  ReflectionService            │
        │                                                                        │
        │   Repositories   →  CommitmentRepository    BriefingRepository         │
        │   (app/repos/)      PushSubscriptionRepository                         │
@@ -169,14 +172,24 @@ Every slice is one vertical feature, end to end (UI + API + DB + tests). Every s
 | 3 | Natural-language commitment parser | ✅ Shipped | `commitment_parser_service.py`, `prompts/commitment_parser.py` | 0003 |
 | 4 | Reminder scheduling (polling) | ✅ Shipped | `services/reminder_scheduler.py` | 0004 |
 | 5 | Morning briefing + cache | ✅ Shipped | `briefing_service.py`, `prompts/morning_briefing.py` | 0005 |
-| 6 | Stats (completion counts, streak, 7-day series) | ✅ Shipped | `stats_service.py`, `routes/stats.py` | — |
+| 6 | Stats (completion counts, streak, 7-day series) | ❌ Built, then removed | contradicted "no streak tyranny" (PRD §5) | 0023 |
 | 7a | Calendar provider abstraction | ✅ Shipped | `providers/calendar_provider.py`, `mock_calendar_provider.py` | 0006 |
 | 7b | Google Calendar real provider | ✅ Shipped | `providers/google_calendar_provider.py` | 0006 |
 | 8 | Web Push notifications (VAPID, SW push event) | ✅ Shipped | `push_service.py`, `routes/push.py`, `sw.js` | 0007 |
-| 9 | Weekly calendar UI + briefing card | ✅ Shipped | `BriefingCard.jsx`, `WeeklyCalendar.jsx` | — |
+| 9 | Calendar grid UI | ❌ Built, then removed | demoted to Settings-only connect (no UI) | 0022 |
 | 10 | Conversational chat (single LLM intent + reply) | ✅ Shipped | `chat_service.py`, `prompts/chat.py`, `ChatBar.jsx` | 0008 |
-| 11 | Production-readiness + deploy | 🔨 In progress | (this is what we're working on now) | — |
-| 12 | Voice input (Web Speech API) | ⏳ Planned | — | — |
+| 11 | Production-readiness + deploy | ✅ Shipped | Railway (backend) + Vercel (frontend) | — |
+| 12 | Voice input/output (web + native Android) | ✅ Shipped | `speech.js`, `nativeSpeech.js`, `nativeTts.js` | 0012, 0016 |
+| 13 | Multi-tenancy / auth | ✅ Shipped, dormant for now | `auth.py`, per-user scoping | 0009, 0013 |
+| 14 | Recurring commitments, stale-plan check-in, evening reflection, ring-alarm escalation, home-screen widget | ✅ Shipped | see ADR list | 0015, 0017–0020 |
+| 15 | v1 refocus — mobile-first, cut groups/reschedule/stats/dormant forms | ✅ Shipped | this slice | 0022, 0023 |
+
+This table stops tracking new slices in detail as of #15 — for anything
+shipped after this, the ADR list in `docs/adr/` is the source of truth,
+not this handbook. This doc was last actually walked end-to-end on
+2026-07-15; treat older status claims elsewhere in this file (e.g. §4's
+JSON examples, which predate recurrence/lead-time/reflections) as
+illustrative of the *shape* of the system, not its exact current state.
 
 ---
 

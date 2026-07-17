@@ -41,7 +41,6 @@ class CommitmentRepository:
         due_at: datetime | None,
         recurrence: str = "none",
         reminder_lead_minutes: int = 0,
-        group_name: str = "",
     ) -> CommitmentResponse:
         """
         Insert a new commitment owned by user_id.
@@ -52,7 +51,6 @@ class CommitmentRepository:
             due_at: Optional due timestamp.
             recurrence: 'none' | 'daily' | 'weekly'.
             reminder_lead_minutes: Minutes before due_at to nudge (0 = exact).
-            group_name: Optional group/section label ('' = ungrouped).
 
         Returns:
             The newly created commitment.
@@ -65,11 +63,11 @@ class CommitmentRepository:
         self._conn.execute(
             """
             INSERT INTO commitments
-                (id, user_id, text, due_at, status, recurrence, reminder_lead_minutes, group_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, user_id, text, due_at, status, recurrence, reminder_lead_minutes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (new_id, str(user_id), text, due_at_str, status, recurrence,
-             reminder_lead_minutes, group_name, now, now),
+             reminder_lead_minutes, now, now),
         )
         self._conn.commit()
 
@@ -121,7 +119,6 @@ class CommitmentRepository:
         status: CommitmentStatus | None = None,
         recurrence: str | None = None,
         reminder_lead_minutes: int | None = None,
-        group_name: str | None = None,
     ) -> CommitmentResponse | None:
         """
         Partial update of a commitment, scoped to its owner.
@@ -147,8 +144,6 @@ class CommitmentRepository:
             updates["recurrence"] = recurrence
         if reminder_lead_minutes is not None:
             updates["reminder_lead_minutes"] = reminder_lead_minutes
-        if group_name is not None:
-            updates["group_name"] = group_name
 
         if not updates:
             return existing
@@ -325,7 +320,6 @@ class CommitmentRepository:
         keys = row.keys()
         recurrence = row["recurrence"] if "recurrence" in keys else "none"
         lead = row["reminder_lead_minutes"] if "reminder_lead_minutes" in keys else 0
-        group_name = row["group_name"] if "group_name" in keys else ""
         return CommitmentResponse(
             id=UUID(row["id"]),
             text=row["text"],
@@ -337,7 +331,6 @@ class CommitmentRepository:
             status=CommitmentStatus(row["status"]),
             recurrence=Recurrence(recurrence or "none"),
             reminder_lead_minutes=lead if lead is not None else 0,
-            group_name=group_name or "",
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )

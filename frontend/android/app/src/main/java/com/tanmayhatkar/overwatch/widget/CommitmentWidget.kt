@@ -14,6 +14,7 @@ import androidx.glance.GlanceModifier
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.action.actionStartActivity as actionStartActivityIntent
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.currentState
@@ -143,7 +144,7 @@ class CommitmentWidget : GlanceAppWidget() {
             modifier = GlanceModifier
                 .fillMaxWidth()
                 .padding(vertical = 4.dp)
-                .clickable(actionStartActivity(commitmentDeepLinkIntent(item.id))),
+                .clickable(actionStartActivityIntent(commitmentDeepLinkIntent(item.id))),
         ) {
             Text(
                 text = truncateText(item.text),

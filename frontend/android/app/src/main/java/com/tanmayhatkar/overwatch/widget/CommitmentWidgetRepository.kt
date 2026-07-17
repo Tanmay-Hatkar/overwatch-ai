@@ -113,7 +113,7 @@ class CommitmentWidgetRepository(private val context: Context) {
             val id = obj.optString("id", "")
             val text = obj.optString("text", "")
             if (id.isEmpty() || text.isEmpty()) continue
-            val dueAtRaw = obj.optString("due_at", "")
+            val dueAtRaw = if (obj.isNull("due_at")) "" else obj.optString("due_at", "")
             val dueAtMillis = if (dueAtRaw.isNotEmpty()) parseBackendTimestamp(dueAtRaw) else null
             items.add(WidgetCommitment(id = id, text = text, dueAtEpochMillis = dueAtMillis))
         }

@@ -55,7 +55,7 @@ from app.prompts.stale_check_reply import (
 from app.repositories.conversation_repository import ConversationRepository
 from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
-from app.services.timezone_utils import resolve_timezone
+from app.services.timezone_utils import resolve_timezone, to_user_date
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ class ChatService:
         else:
             history = request.history[-10:]
 
-        user_prompt = self._build_user_prompt(user_id, request, now_local, history)
+        user_prompt = self._build_user_prompt(user_id, request, now_local, user_tz, history)
 
         raw = call_llm(
             system_prompt=SYSTEM_PROMPT,
@@ -152,6 +152,7 @@ class ChatService:
         user_id: UUID,
         request: ChatRequest,
         now_local: datetime,
+        user_tz: ZoneInfo,
         history: list[ChatTurn],
     ) -> str:
         """
@@ -172,11 +173,14 @@ class ChatService:
         open_items = self._service.list(user_id, status=CommitmentStatus.OPEN)
         today_date = now_local.date()
 
-        today_open = [c for c in open_items if c.due_at and c.due_at.date() == today_date]
-        overdue = [c for c in open_items if c.due_at and c.due_at.date() < today_date]
+        # due_at is stored UTC-aware; bucket and display it in the user's
+        # timezone (to_user_date), not the server's/UTC — same reasoning as
+        # BriefingService._bucket_commitments (ADR-0023 follow-up).
+        today_open = [c for c in open_items if c.due_at and to_user_date(c.due_at, user_tz) == today_date]
+        overdue = [c for c in open_items if c.due_at and to_user_date(c.due_at, user_tz) < today_date]
 
-        open_list = self._format_commitment_list(today_open) if today_open else "  (none)"
-        overdue_list = self._format_commitment_list(overdue) if overdue else "  (none)"
+        open_list = self._format_commitment_list(today_open, user_tz) if today_open else "  (none)"
+        overdue_list = self._format_commitment_list(overdue, user_tz) if overdue else "  (none)"
 
         # Today's calendar events
         events_list = "  (none)"
@@ -187,7 +191,7 @@ class ChatService:
             if events:
                 lines = []
                 for e in events:
-                    time_str = e.start_at.strftime("%I:%M %p").lstrip("0")
+                    time_str = e.start_at.astimezone(user_tz).strftime("%I:%M %p").lstrip("0")
                     lines.append(f"  - {time_str} {e.title}")
                 events_list = "\n".join(lines)
 
@@ -217,11 +221,11 @@ class ChatService:
         )
 
     @staticmethod
-    def _format_commitment_list(commitments: list[CommitmentResponse]) -> str:
+    def _format_commitment_list(commitments: list[CommitmentResponse], user_tz: ZoneInfo) -> str:
         lines = []
         for c in commitments:
             if c.due_at:
-                time_str = c.due_at.strftime("%I:%M %p").lstrip("0")
+                time_str = c.due_at.astimezone(user_tz).strftime("%I:%M %p").lstrip("0")
                 lines.append(f"  - {c.text} (due {time_str})")
             else:
                 lines.append(f"  - {c.text}")

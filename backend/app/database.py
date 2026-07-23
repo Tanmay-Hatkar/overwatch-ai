@@ -47,7 +47,18 @@ def get_connection() -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # timeout: if the database is locked, wait up to 15s for it to free up
     # before raising — the Python-driver-level companion to PRAGMA busy_timeout.
-    conn = sqlite3.connect(db_path, timeout=15.0)
+    #
+    # check_same_thread=False: FastAPI runs sync path operations and their
+    # `yield`-based dependencies via anyio's worker threadpool, which does
+    # not guarantee a get_db() generator's setup and its post-request
+    # conn.close() teardown land on the same OS thread under concurrent
+    # load (e.g. the ~6 parallel requests the frontend fires on page
+    # load). Without this flag, that thread hop raises
+    # "SQLite objects created in a thread can only be used in that same
+    # thread" and 500s the request. Safe here because each connection is
+    # still only ever used sequentially within one logical request/tick —
+    # never concurrently from two threads at once.
+    conn = sqlite3.connect(db_path, timeout=15.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
     # Concurrency hardening. The frontend fires ~6 requests in parallel on

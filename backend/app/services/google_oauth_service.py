@@ -155,11 +155,19 @@ def exchange_code_for_user(code: str) -> GoogleUserInfo:
 
     # Verify signature, issuer, audience, expiry. This is the security
     # boundary — never trust the id_token's claims without this.
+    #
+    # clock_skew_in_seconds: google-auth defaults this to 0, so any
+    # difference at all between this machine's clock and Google's — even
+    # sub-second drift from an unsynced local clock — rejects an otherwise
+    # valid token ("Token used too early"). 10s is the commonly-used
+    # tolerance for exactly this (NTP drift, request latency); it doesn't
+    # meaningfully weaken expiry/issued-at enforcement.
     try:
         idinfo = google_id_token.verify_oauth2_token(
             raw_id_token,
             google_requests.Request(),
             settings.google_client_id,
+            clock_skew_in_seconds=10,
         )
     except ValueError as exc:
         logger.exception("Google id_token failed verification")

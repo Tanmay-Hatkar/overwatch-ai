@@ -314,8 +314,12 @@ def test_query_intent_formats_commitment_time_in_user_timezone(
         )
 
     user_prompt = mock.call_args.kwargs["user_prompt"]
-    assert "4:00 PM" in user_prompt
-    assert "8:00 PM" not in user_prompt
+    # Scoped to the commitment's own due-time formatting, not a bare
+    # substring search — the prompt separately includes the current wall
+    # clock time, which can legitimately read "8:00 PM" on any given day
+    # this test happens to run, unrelated to the due_at formatting bug.
+    assert "Call the dentist (due 4:00 PM)" in user_prompt
+    assert "Call the dentist (due 8:00 PM)" not in user_prompt
 
 
 def test_query_intent_buckets_today_by_user_timezone_not_utc(

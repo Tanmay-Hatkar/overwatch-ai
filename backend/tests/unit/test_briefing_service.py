@@ -177,8 +177,12 @@ def test_formats_commitment_time_in_user_timezone(
 
     assert result.today_count == 1
     user_prompt = mock.call_args.kwargs["user_prompt"]
-    assert "4:00 PM" in user_prompt
-    assert "8:00 PM" not in user_prompt
+    # Scoped to the commitment's own due-time formatting, not a bare
+    # substring search (see the analogous chat_service test for why: this
+    # module's prompt template has no "current time" field, but scoping
+    # keeps both tests immune to any future coincidental collision).
+    assert "Call the dentist (due 4:00 PM)" in user_prompt
+    assert "Call the dentist (due 8:00 PM)" not in user_prompt
 
 
 # ---------------------------------------------------------------------------

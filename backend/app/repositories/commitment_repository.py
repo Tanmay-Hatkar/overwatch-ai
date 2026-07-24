@@ -41,6 +41,7 @@ class CommitmentRepository:
         due_at: datetime | None,
         recurrence: str = "none",
         reminder_lead_minutes: int = 0,
+        reminder_phrase: str | None = None,
     ) -> CommitmentResponse:
         """
         Insert a new commitment owned by user_id.
@@ -51,6 +52,8 @@ class CommitmentRepository:
             due_at: Optional due timestamp.
             recurrence: 'none' | 'daily' | 'weekly'.
             reminder_lead_minutes: Minutes before due_at to nudge (0 = exact).
+            reminder_phrase: Optional natural check-in phrasing for reminder
+                delivery (None = not generated; callers fall back to a template).
 
         Returns:
             The newly created commitment.
@@ -63,11 +66,12 @@ class CommitmentRepository:
         self._conn.execute(
             """
             INSERT INTO commitments
-                (id, user_id, text, due_at, status, recurrence, reminder_lead_minutes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, user_id, text, due_at, status, recurrence, reminder_lead_minutes,
+                 reminder_phrase, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (new_id, str(user_id), text, due_at_str, status, recurrence,
-             reminder_lead_minutes, now, now),
+             reminder_lead_minutes, reminder_phrase, now, now),
         )
         self._conn.commit()
 
@@ -119,6 +123,7 @@ class CommitmentRepository:
         status: CommitmentStatus | None = None,
         recurrence: str | None = None,
         reminder_lead_minutes: int | None = None,
+        reminder_phrase: str | None = None,
     ) -> CommitmentResponse | None:
         """
         Partial update of a commitment, scoped to its owner.
@@ -144,6 +149,8 @@ class CommitmentRepository:
             updates["recurrence"] = recurrence
         if reminder_lead_minutes is not None:
             updates["reminder_lead_minutes"] = reminder_lead_minutes
+        if reminder_phrase is not None:
+            updates["reminder_phrase"] = reminder_phrase
 
         if not updates:
             return existing
@@ -315,11 +322,12 @@ class CommitmentRepository:
     @staticmethod
     def _row_to_response(row: sqlite3.Row) -> CommitmentResponse:
         """Convert a sqlite3.Row to a CommitmentResponse."""
-        # `recurrence`/`reminder_lead_minutes` were added in later migrations;
-        # default safely if a raw row mapping predates them.
+        # `recurrence`/`reminder_lead_minutes`/`reminder_phrase` were added in
+        # later migrations; default safely if a raw row mapping predates them.
         keys = row.keys()
         recurrence = row["recurrence"] if "recurrence" in keys else "none"
         lead = row["reminder_lead_minutes"] if "reminder_lead_minutes" in keys else 0
+        reminder_phrase = row["reminder_phrase"] if "reminder_phrase" in keys else None
         return CommitmentResponse(
             id=UUID(row["id"]),
             text=row["text"],
@@ -331,6 +339,7 @@ class CommitmentRepository:
             status=CommitmentStatus(row["status"]),
             recurrence=Recurrence(recurrence or "none"),
             reminder_lead_minutes=lead if lead is not None else 0,
+            reminder_phrase=reminder_phrase,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )

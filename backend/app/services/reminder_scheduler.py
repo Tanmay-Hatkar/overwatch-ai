@@ -138,9 +138,10 @@ class ReminderScheduler:
                     continue
 
                 for commitment in newly_overdue:
+                    body = commitment.reminder_phrase or f"You said you'd: {commitment.text}"
                     payload = PushPayload(
                         title="Overwatch",
-                        body=f"You said you'd: {commitment.text}",
+                        body=body,
                         tag=str(commitment.id),
                     )
                     stale = self._push.broadcast(subscriptions, payload)

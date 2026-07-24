@@ -73,6 +73,17 @@ class CommitmentBase(BaseModel):
             "editable per item."
         ),
     )
+    reminder_phrase: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Natural, specific-recall phrasing used at reminder time instead of "
+            "a raw echo of `text` (e.g. \"You said you'd start interview prep at "
+            "2:30 — starting?\"). None means it hasn't been generated yet (e.g. "
+            "commitments created before this field existed) — callers fall back "
+            "to a templated string in that case."
+        ),
+    )
 
 
 class CommitmentCreate(CommitmentBase):
@@ -101,6 +112,7 @@ class CommitmentUpdate(BaseModel):
     status: CommitmentStatus | None = None
     recurrence: Recurrence | None = None
     reminder_lead_minutes: int | None = Field(default=None, ge=0, le=1440)
+    reminder_phrase: str | None = Field(default=None, max_length=200)
 
 
 class CommitmentResponse(CommitmentBase):

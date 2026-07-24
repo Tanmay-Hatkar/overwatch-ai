@@ -75,6 +75,56 @@ def test_parses_response_with_missing_due_at(parser: CommitmentParserService) ->
     assert result.due_at is None
 
 
+def test_parses_response_with_reminder_phrase(parser: CommitmentParserService) -> None:
+    """Standard happy path: LLM includes a reminder_phrase alongside text/due_at."""
+    fake = json.dumps({
+        "text": "Call mom",
+        "due_at": "2026-05-17T15:00:00",
+        "reminder_phrase": "You said you'd call mom at 3pm — calling now?",
+    })
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "remind me to call mom tomorrow at 3pm")
+
+    assert result.reminder_phrase == "You said you'd call mom at 3pm — calling now?"
+
+
+def test_parses_response_with_missing_reminder_phrase(parser: CommitmentParserService) -> None:
+    """LLM omitting reminder_phrase entirely is treated as None (lenient, non-fatal)."""
+    fake = json.dumps({"text": "Clean my room", "due_at": None})
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "I should clean my room")
+
+    assert result.reminder_phrase is None
+
+
+def test_drops_invalid_reminder_phrase_gracefully(parser: CommitmentParserService) -> None:
+    """A non-string reminder_phrase is dropped; commitment is still created."""
+    fake = json.dumps({"text": "Test", "due_at": None, "reminder_phrase": 42})
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "test")
+
+    assert result.text == "Test"
+    assert result.reminder_phrase is None
+
+
+def test_drops_empty_reminder_phrase_gracefully(parser: CommitmentParserService) -> None:
+    """A whitespace-only reminder_phrase is dropped, not stored as-is."""
+    fake = json.dumps({"text": "Test", "due_at": None, "reminder_phrase": "   "})
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "test")
+
+    assert result.reminder_phrase is None
+
+
+def test_trims_whitespace_from_reminder_phrase(parser: CommitmentParserService) -> None:
+    """Surrounding whitespace in reminder_phrase is trimmed before storage."""
+    fake = json.dumps({"text": "Test", "due_at": None, "reminder_phrase": "  Trim me  "})
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "test")
+
+    assert result.reminder_phrase == "Trim me"
+
+
 # ---------------------------------------------------------------------------
 # Robustness — LLM output quirks
 # ---------------------------------------------------------------------------

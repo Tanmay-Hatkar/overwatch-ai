@@ -89,6 +89,21 @@ def _seed_subscription(db_factory) -> None:
         conn.close()
 
 
+def _seed_overdue_commitment_with_phrase(db_factory, text: str, reminder_phrase: str) -> str:
+    """Insert an overdue commitment that already has a reminder_phrase set."""
+    conn = db_factory()
+    try:
+        service = CommitmentService(CommitmentRepository(conn))
+        past = datetime.now(UTC) - timedelta(hours=1)
+        created = service.create(
+            _uid(db_factory),
+            CommitmentCreate(text=text, due_at=past, reminder_phrase=reminder_phrase),
+        )
+        return str(created.id)
+    finally:
+        conn.close()
+
+
 def _seed_future_commitment(db_factory, text: str = "Future task") -> None:
     conn = db_factory()
     try:
@@ -155,6 +170,40 @@ def test_already_notified_items_not_repushed(db_factory, scheduler) -> None:
         scheduler._tick()
 
     scheduler._push.broadcast.assert_not_called()
+
+
+def test_push_uses_reminder_phrase_when_set(db_factory, scheduler) -> None:
+    """When a commitment has a reminder_phrase, it's used as the push body verbatim."""
+    with patch(CONN_TARGET, side_effect=db_factory):
+        scheduler._tick()  # exit first-tick state
+
+    _seed_overdue_commitment_with_phrase(
+        db_factory, "Interview prep", "You said you'd start interview prep at 2:30 — starting?"
+    )
+    _seed_subscription(db_factory)
+
+    with patch(CONN_TARGET, side_effect=db_factory):
+        scheduler._tick()
+
+    scheduler._push.broadcast.assert_called_once()
+    _subs, payload = scheduler._push.broadcast.call_args.args
+    assert payload.body == "You said you'd start interview prep at 2:30 — starting?"
+
+
+def test_push_falls_back_to_template_when_no_reminder_phrase(db_factory, scheduler) -> None:
+    """Commitments without a reminder_phrase (e.g. pre-migration rows) keep the old template."""
+    with patch(CONN_TARGET, side_effect=db_factory):
+        scheduler._tick()  # exit first-tick state
+
+    _seed_overdue_commitment(db_factory, "Old style task")
+    _seed_subscription(db_factory)
+
+    with patch(CONN_TARGET, side_effect=db_factory):
+        scheduler._tick()
+
+    scheduler._push.broadcast.assert_called_once()
+    _subs, payload = scheduler._push.broadcast.call_args.args
+    assert payload.body == "You said you'd: Old style task"
 
 
 def test_future_commitments_not_pushed(db_factory, scheduler) -> None:

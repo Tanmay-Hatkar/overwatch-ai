@@ -105,6 +105,35 @@ def test_exchange_code_for_user_success() -> None:
     assert user.picture == "https://example.com/alice.png"
 
 
+def test_exchange_code_for_user_tolerates_clock_skew() -> None:
+    """verify_oauth2_token must be called with a nonzero clock_skew_in_seconds.
+
+    google-auth defaults this to 0, so any drift at all between this
+    server's clock and Google's — even sub-second drift from an unsynced
+    local clock — rejects an otherwise valid token ("Token used too
+    early"). Regression test locking in the fix rather than asserting on
+    the exact tolerance value, so it doesn't churn if the number changes."""
+    mock_response = MagicMock()
+    mock_response.ok = True
+    mock_response.json.return_value = {"id_token": "fake.id.token"}
+
+    with (
+        patch("app.services.google_oauth_service.requests.post", return_value=mock_response),
+        patch(
+            "app.services.google_oauth_service.google_id_token.verify_oauth2_token",
+            return_value={
+                "sub": "g",
+                "email": "alice@example.com",
+                "name": "Alice",
+                "email_verified": True,
+            },
+        ) as mock_verify,
+    ):
+        google_oauth_service.exchange_code_for_user("test-code")
+
+    assert mock_verify.call_args.kwargs["clock_skew_in_seconds"] > 0
+
+
 def test_exchange_code_for_user_rejects_unverified_email() -> None:
     """Google sometimes returns email_verified=False — refuse those sign-ins."""
     mock_response = MagicMock()

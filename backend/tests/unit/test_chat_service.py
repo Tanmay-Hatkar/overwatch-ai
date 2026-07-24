@@ -287,6 +287,71 @@ def test_query_intent_prompt_includes_current_state(
     assert "Update docs" in user_prompt
 
 
+def test_query_intent_formats_commitment_time_in_user_timezone(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """due_at is stored UTC; the prompt shown to the LLM must render it in
+    the user's local timezone, not raw UTC (regression: _format_commitment_list
+    called strftime() directly on the UTC-aware datetime, so a 4pm-local
+    commitment showed as '8pm'). Built from 4pm America/New_York converted
+    to UTC (via ZoneInfo, so DST is handled correctly) rather than a
+    hardcoded UTC offset, so this doesn't flip between EST/EDT."""
+    from zoneinfo import ZoneInfo
+
+    from app.models.commitment import CommitmentCreate
+
+    ny = ZoneInfo("America/New_York")
+    four_pm_ny_today = datetime.now(ny).replace(hour=16, minute=0, second=0, microsecond=0)
+    service.create(
+        UID, CommitmentCreate(text="Call the dentist", due_at=four_pm_ny_today.astimezone(UTC))
+    )
+
+    fake = _llm_response("query", reply="checked.")
+    with patch(LLM_PATCH, return_value=fake) as mock:
+        chat_service.handle(
+            UID,
+            ChatRequest(message="what's on my plate?", timezone="America/New_York"),
+        )
+
+    user_prompt = mock.call_args.kwargs["user_prompt"]
+    # Scoped to the commitment's own due-time formatting, not a bare
+    # substring search — the prompt separately includes the current wall
+    # clock time, which can legitimately read "8:00 PM" on any given day
+    # this test happens to run, unrelated to the due_at formatting bug.
+    assert "Call the dentist (due 4:00 PM)" in user_prompt
+    assert "Call the dentist (due 8:00 PM)" not in user_prompt
+
+
+def test_query_intent_buckets_today_by_user_timezone_not_utc(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """A commitment due late evening US-Eastern can already be tomorrow in
+    UTC. Bucketing must use the user's timezone (to_user_date), not a raw
+    UTC .date() comparison, or it silently drops out of 'today'/'overdue'
+    (regression: _build_user_prompt compared due_at.date() directly against
+    the local today_date). Computed off the real current time in
+    America/New_York (via ZoneInfo, so DST is handled correctly) rather
+    than a hardcoded UTC offset, to avoid the day-boundary flakiness this
+    suite has hit before (see git history)."""
+    from zoneinfo import ZoneInfo
+
+    from app.models.commitment import CommitmentCreate
+
+    ny = ZoneInfo("America/New_York")
+    eleven_pm_ny_today = datetime.now(ny).replace(hour=23, minute=0, second=0, microsecond=0)
+    service.create(UID, CommitmentCreate(text="Late call", due_at=eleven_pm_ny_today.astimezone(UTC)))
+
+    fake = _llm_response("query", reply="checked.")
+    with patch(LLM_PATCH, return_value=fake) as mock:
+        chat_service.handle(
+            UID,
+            ChatRequest(message="what's on my plate?", timezone="America/New_York"),
+        )
+
+    user_prompt = mock.call_args.kwargs["user_prompt"]
+    assert "Late call" in user_prompt
+
+
 # ---------------------------------------------------------------------------
 # general intent
 # ---------------------------------------------------------------------------

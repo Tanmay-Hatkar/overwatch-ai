@@ -124,13 +124,13 @@ class BriefingService:
             today_name=today.strftime("%A"),
             today_date=today.isoformat(),
             today_count=len(today_commitments),
-            today_commitments=self._format_list(today_commitments),
+            today_commitments=self._format_list(today_commitments, user_tz),
             overdue_count=len(overdue_commitments),
-            overdue_commitments=self._format_list(overdue_commitments),
+            overdue_commitments=self._format_list(overdue_commitments, user_tz),
             floating_count=len(floating_commitments),
-            floating_commitments=self._format_list(floating_commitments),
+            floating_commitments=self._format_list(floating_commitments, user_tz),
             events_count=len(events),
-            events=self._format_events(events),
+            events=self._format_events(events, user_tz),
         )
 
         raw = call_llm(
@@ -204,14 +204,14 @@ class BriefingService:
         return today_bucket, overdue_bucket, floating_bucket
 
     @staticmethod
-    def _format_list(commitments: list[CommitmentResponse]) -> str:
+    def _format_list(commitments: list[CommitmentResponse], user_tz: ZoneInfo) -> str:
         """Format a list of commitments as a multi-line string for the prompt."""
         if not commitments:
             return "(none)"
         lines = []
         for c in commitments:
             if c.due_at is not None:
-                time_str = c.due_at.strftime("%I:%M %p").lstrip("0")
+                time_str = c.due_at.astimezone(user_tz).strftime("%I:%M %p").lstrip("0")
                 lines.append(f"- {c.text} (due {time_str})")
             else:
                 lines.append(f"- {c.text}")
@@ -224,13 +224,13 @@ class BriefingService:
         return self._calendar.list_today(today)
 
     @staticmethod
-    def _format_events(events: list[CalendarEvent]) -> str:
+    def _format_events(events: list[CalendarEvent], user_tz: ZoneInfo) -> str:
         """Format calendar events as a multi-line string for the prompt."""
         if not events:
             return "(none)"
         lines = []
         for e in events:
-            time_str = e.start_at.strftime("%I:%M %p").lstrip("0")
+            time_str = e.start_at.astimezone(user_tz).strftime("%I:%M %p").lstrip("0")
             lines.append(f"- {time_str} {e.title}")
         return "\n".join(lines)
 

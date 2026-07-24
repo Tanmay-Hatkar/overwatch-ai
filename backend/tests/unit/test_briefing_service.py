@@ -155,6 +155,36 @@ def test_excludes_future_commitments(
     assert result.overdue_count == 0
 
 
+def test_formats_commitment_time_in_user_timezone(
+    briefing_service: BriefingService, service: CommitmentService
+) -> None:
+    """due_at is stored UTC; the prompt shown to the LLM must render it in
+    the user's local timezone, not raw UTC (regression: _format_list called
+    strftime() directly on the UTC-aware datetime, so a 4pm-local
+    commitment showed as '8pm'). Built from 4pm America/New_York converted
+    to UTC (via ZoneInfo, so DST is handled correctly) rather than a
+    hardcoded UTC offset, so this doesn't flip between EST/EDT."""
+    from zoneinfo import ZoneInfo
+
+    ny = ZoneInfo("America/New_York")
+    four_pm_ny_today = datetime.now(ny).replace(hour=16, minute=0, second=0, microsecond=0)
+    service.create(
+        UID, CommitmentCreate(text="Call the dentist", due_at=four_pm_ny_today.astimezone(UTC))
+    )
+
+    with patch(LLM_PATCH_TARGET, return_value="briefing") as mock:
+        result = briefing_service.generate_today(UID, user_tz=ny)
+
+    assert result.today_count == 1
+    user_prompt = mock.call_args.kwargs["user_prompt"]
+    # Scoped to the commitment's own due-time formatting, not a bare
+    # substring search (see the analogous chat_service test for why: this
+    # module's prompt template has no "current time" field, but scoping
+    # keeps both tests immune to any future coincidental collision).
+    assert "Call the dentist (due 4:00 PM)" in user_prompt
+    assert "Call the dentist (due 8:00 PM)" not in user_prompt
+
+
 # ---------------------------------------------------------------------------
 # Error paths
 # ---------------------------------------------------------------------------

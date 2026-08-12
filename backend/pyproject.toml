@@ -23,6 +23,7 @@ dev = [
     "pytest>=9.0",
     "httpx>=0.27",
     "pytest-cov>=5.0",
+    "pyyaml>=6.0",
 ]
 
 [build-system]
@@ -36,3 +37,7 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+addopts = "-m 'not eval'"
+markers = [
+    "eval: makes real LLM calls against a configured provider (costs API usage, not fully deterministic across provider updates) -- excluded from the default run, invoke explicitly with `pytest -m eval`",
+]

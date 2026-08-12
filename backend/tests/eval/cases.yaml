@@ -1,0 +1,289 @@
+# cases.yaml — Hand-labeled golden cases for evaluating real LLM extraction
+# accuracy (see the AI-foundation plan, phase A1). Never LLM-generated —
+# labels are written by a human so scoring can't grade itself.
+#
+# Each case pins "now" (naive local datetime, no offset) + a timezone so
+# results are reproducible regardless of when the eval actually runs.
+# "now" defaults to Tue 2026-05-12 09:00 to match the prompts' own
+# few-shot examples (backend/app/prompts/{chat,commitment_parser}.py) —
+# not required, just keeps the mental model consistent.
+#
+# pipeline: "parse" exercises CommitmentParserService (POST
+# /commitments/parse — text/due_at/reminder_phrase only, no recurrence).
+# pipeline: "chat" exercises ChatService (POST /chat — adds intent
+# classification + recurrence on top).
+#
+# expect fields (all optional, only assert what's given):
+#   due_at_date: "YYYY-MM-DD" | due_at_time: "HH:MM" | due_at_null: true
+#   text_contains / text_not_contains: substrings, case-insensitive
+#   intent: "add_commitment" | "query" | "clarify" | "general"
+#   recurrence: "none" | "daily" | "weekly"
+#   reminder_phrase_judge: rubric text -> scored by a real LLM-as-judge call
+
+cases:
+  # ---------------------------------------------------------------------
+  # explicit_dates
+  # ---------------------------------------------------------------------
+  - id: explicit_date_and_time
+    category: explicit_dates
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "call mom on May 20th at 4pm"
+    expect:
+      due_at_date: "2026-05-20"
+      due_at_time: "16:00"
+
+  - id: explicit_day_of_month_no_year
+    category: explicit_dates
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "meeting on the 15th at 10am"
+    expect:
+      due_at_date: "2026-05-15"
+      due_at_time: "10:00"
+
+  # ---------------------------------------------------------------------
+  # relative_dates
+  # ---------------------------------------------------------------------
+  - id: relative_tomorrow
+    category: relative_dates
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "call mom tomorrow at 3pm"
+    expect:
+      due_at_date: "2026-05-13"
+      due_at_time: "15:00"
+
+  - id: relative_named_weekday_no_time_defaults_9am
+    category: relative_dates
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "finish the deck by Friday"
+    expect:
+      due_at_date: "2026-05-15"
+      due_at_time: "09:00"
+
+  - id: relative_in_n_days
+    category: relative_dates
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "in 10 days I need to renew my passport"
+    expect:
+      due_at_date: "2026-05-22"
+
+  # ---------------------------------------------------------------------
+  # relative_time_of_day (needs the now_time clock anchor added in A0/A1)
+  # ---------------------------------------------------------------------
+  - id: relative_in_30_minutes
+    category: relative_time_of_day
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "call the plumber in 30 minutes"
+    expect:
+      due_at_date: "2026-05-12"
+      due_at_time: "09:30"
+
+  - id: relative_in_an_hour
+    category: relative_time_of_day
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "start dinner in an hour"
+    expect:
+      due_at_date: "2026-05-12"
+      due_at_time: "10:00"
+
+  # ---------------------------------------------------------------------
+  # recurrence (chat-only -- the standalone parser doesn't extract this)
+  # ---------------------------------------------------------------------
+  - id: recurrence_daily
+    category: recurrence
+    pipeline: chat
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "start my night routine every day at 11pm"
+    expect:
+      intent: add_commitment
+      recurrence: daily
+
+  - id: recurrence_weekly
+    category: recurrence
+    pipeline: chat
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "team meeting every week on Tuesday at 10am"
+    expect:
+      intent: add_commitment
+      recurrence: weekly
+
+  - id: recurrence_out_of_schema_falls_back_to_none
+    category: recurrence
+    pipeline: chat
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "water the plants every other week"
+    expect:
+      intent: add_commitment
+      recurrence: none # documents a real schema limitation (no biweekly), not a bug
+
+  # ---------------------------------------------------------------------
+  # floating_no_due_date
+  # ---------------------------------------------------------------------
+  - id: floating_no_date_mentioned
+    category: floating_no_due_date
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "I should really get better at meal prepping"
+    expect:
+      due_at_null: true
+
+  - id: floating_rate_goal
+    category: floating_no_due_date
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "gym 4 times a week"
+    expect:
+      due_at_null: true
+
+  # ---------------------------------------------------------------------
+  # timezone_edge_cases (regression coverage for the A0 timezone bug)
+  # ---------------------------------------------------------------------
+  - id: near_midnight_utc_already_next_day_in_tokyo
+    category: timezone_edge_cases
+    pipeline: parse
+    # "now" is local wall-clock time in the given timezone (not UTC).
+    # 2026-05-13 08:30 in Asia/Tokyo (UTC+9) is still 2026-05-12 23:30 in
+    # UTC -- this is the exact scenario Bug 1 got wrong: a UTC-only
+    # server would think "today" is still the 12th here.
+    now: "2026-05-13T08:30:00"
+    timezone: Asia/Tokyo
+    message: "call mom tomorrow at 3pm"
+    expect:
+      due_at_date: "2026-05-14"
+      due_at_time: "15:00"
+
+  - id: non_utc_offset_same_day
+    category: timezone_edge_cases
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Los_Angeles
+    message: "meeting today at 2pm"
+    expect:
+      due_at_date: "2026-05-12"
+      due_at_time: "14:00"
+
+  # ---------------------------------------------------------------------
+  # text_extraction (imperative rephrasing, filler removal)
+  # ---------------------------------------------------------------------
+  - id: strips_filler_and_hedging
+    category: text_extraction
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "I should probably finally clean my room"
+    expect:
+      text_not_contains: ["probably", "finally", "I should"]
+
+  - id: imperative_rephrasing
+    category: text_extraction
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "remind me to call mom"
+    expect:
+      text_contains: ["call mom"]
+      text_not_contains: ["remind me"]
+
+  # ---------------------------------------------------------------------
+  # reminder_phrase_quality (LLM-as-judge)
+  # ---------------------------------------------------------------------
+  - id: reminder_phrase_with_due_time
+    category: reminder_phrase_quality
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "call mom tomorrow at 3pm"
+    expect:
+      reminder_phrase_judge: >
+        Must sound like a considerate person recalling what the user said,
+        not a robot echoing a task label. Should start from "You said
+        you'd" or a natural equivalent, reference the 3pm time, and be
+        framed as a question, not a command or judgment.
+
+  # NOTE: this case fails intermittently on the LLM-as-judge check even
+  # though the extracted phrase matches the product's own canonical
+  # example almost verbatim ("...did it happen?" -- see ADR-0021 and
+  # commitment_parser.py's few-shot examples). Rubric wording was
+  # iterated twice without resolving it -- this looks like genuine
+  # judge subjectivity on "is a neutral yes/no question ever a
+  # judgment," not a real defect in the extracted phrase. Left in
+  # deliberately as a documented example of LLM-as-judge noise on
+  # subjective criteria, exactly the caveat the eval design anticipated.
+  - id: reminder_phrase_no_due_time
+    category: reminder_phrase_quality
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "gym 4 times a week"
+    expect:
+      reminder_phrase_judge: >
+        Must sound like a considerate check-in framed as a recall/question,
+        never as a command. A neutral yes/no question like "did it happen?"
+        is explicitly correct and NOT a judgment by itself -- this product's
+        own design (see ADR-0021) deliberately uses exactly this phrasing;
+        only fail this if the phrase adds extra language beyond the neutral
+        question that shames or scores the user (e.g. "you only did it
+        twice", "you failed to", "you missed"). It's fine for the phrase to
+        reference "today" for a recurring/no-fixed-time commitment like
+        this one -- that's not the same as inventing a specific CLOCK TIME
+        (e.g. "at 3pm"), which the message never gave and the phrase must
+        not fabricate.
+
+  # ---------------------------------------------------------------------
+  # intent_classification (chat-only)
+  # ---------------------------------------------------------------------
+  - id: intent_general_greeting
+    category: intent_classification
+    pipeline: chat
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "hey"
+    expect:
+      intent: general
+
+  - id: intent_query
+    category: intent_classification
+    pipeline: chat
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "what's on my plate today?"
+    expect:
+      intent: query
+
+  - id: intent_clarify_on_missing_time
+    category: intent_classification
+    pipeline: chat
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "add a team meeting tomorrow"
+    expect:
+      intent: clarify
+
+  - id: intent_add_commitment_with_time
+    category: intent_classification
+    pipeline: chat
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "I have a client meeting at 2pm today"
+    expect:
+      intent: add_commitment
+      due_at_date: "2026-05-12"
+      due_at_time: "14:00"

@@ -118,6 +118,79 @@ def test_drops_empty_reminder_phrase_gracefully(parser: CommitmentParserService)
 
 
 # ---------------------------------------------------------------------------
+# reminder_lead_minutes (A5: inferred from task nature, standalone parser)
+# ---------------------------------------------------------------------------
+
+
+def test_parses_response_with_reminder_lead_minutes(parser: CommitmentParserService) -> None:
+    """Standard happy path: LLM infers a positive lead for a meeting."""
+    fake = json.dumps({
+        "text": "Client meeting",
+        "due_at": "2026-05-17T14:00:00",
+        "reminder_lead_minutes": 15,
+    })
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "client meeting at 2pm tomorrow")
+
+    assert result.reminder_lead_minutes == 15
+
+
+def test_reminder_lead_minutes_defaults_to_zero_when_missing(
+    parser: CommitmentParserService,
+) -> None:
+    """LLM omitting reminder_lead_minutes entirely defaults to 0 (exact-time), not an error."""
+    fake = json.dumps({"text": "Call mom", "due_at": "2026-05-17T15:00:00"})
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "call mom tomorrow at 3pm")
+
+    assert result.reminder_lead_minutes == 0
+
+
+def test_reminder_lead_minutes_forced_to_zero_when_no_due_at(
+    parser: CommitmentParserService,
+) -> None:
+    """A lead time only makes sense with a due time -- forced to 0 even if
+    the LLM returned a positive value for a floating commitment."""
+    fake = json.dumps({"text": "Meal prep", "due_at": None, "reminder_lead_minutes": 30})
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "I should meal prep more")
+
+    assert result.due_at is None
+    assert result.reminder_lead_minutes == 0
+
+
+def test_reminder_lead_minutes_clamped_to_valid_range(
+    parser: CommitmentParserService,
+) -> None:
+    """An out-of-range value (e.g. a hallucinated 99999) is clamped, not
+    stored raw or allowed to fail the whole parse."""
+    fake = json.dumps({
+        "text": "Client meeting",
+        "due_at": "2026-05-17T14:00:00",
+        "reminder_lead_minutes": 99999,
+    })
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "client meeting at 2pm tomorrow")
+
+    assert result.reminder_lead_minutes == 1440
+
+
+def test_reminder_lead_minutes_invalid_type_defaults_to_zero(
+    parser: CommitmentParserService,
+) -> None:
+    """A non-numeric value is dropped gracefully rather than raising."""
+    fake = json.dumps({
+        "text": "Client meeting",
+        "due_at": "2026-05-17T14:00:00",
+        "reminder_lead_minutes": "soon-ish",
+    })
+    with patch(LLM_PATCH_TARGET, return_value=fake):
+        result = parser.parse_and_create(UID, "client meeting at 2pm tomorrow")
+
+    assert result.reminder_lead_minutes == 0
+
+
+# ---------------------------------------------------------------------------
 # Timezone handling — regression coverage for the "today" resolution bug
 # ---------------------------------------------------------------------------
 

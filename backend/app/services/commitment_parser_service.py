@@ -80,8 +80,14 @@ class CommitmentParserService:
         text = self._extract_text(parsed)
         due_at = self._extract_due_at(parsed)
         reminder_phrase = self._extract_reminder_phrase(parsed)
+        reminder_lead_minutes = self._extract_reminder_lead_minutes(parsed, due_at)
 
-        payload = CommitmentCreate(text=text, due_at=due_at, reminder_phrase=reminder_phrase)
+        payload = CommitmentCreate(
+            text=text,
+            due_at=due_at,
+            reminder_phrase=reminder_phrase,
+            reminder_lead_minutes=reminder_lead_minutes,
+        )
         logger.info(f"Parsed commitment: text={text!r}, due_at={due_at}")
         return self._service.create(user_id, payload)
 
@@ -176,3 +182,22 @@ class CommitmentParserService:
             logger.warning(f"LLM returned invalid reminder_phrase, dropping: {phrase!r}")
             return None
         return phrase.strip()
+
+    @staticmethod
+    def _extract_reminder_lead_minutes(parsed: dict, due_at: datetime | None) -> int:
+        """
+        Pull the 'reminder_lead_minutes' field. Lenient, same as
+        reminder_phrase: any missing/invalid value falls back to 0 (fire
+        exactly at due_at) rather than failing the whole parse. A lead time
+        only makes sense with a due time, so it's forced to 0 when due_at
+        is None regardless of what the LLM returned — mirrors the same
+        clamp ChatService._create_commitments() already applies.
+        """
+        if due_at is None:
+            return 0
+        raw = parsed.get("reminder_lead_minutes")
+        try:
+            return max(0, min(1440, int(raw or 0)))
+        except (ValueError, TypeError):
+            logger.warning(f"LLM returned invalid reminder_lead_minutes, defaulting to 0: {raw!r}")
+            return 0

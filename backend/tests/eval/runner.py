@@ -178,10 +178,25 @@ def _to_local(due_at: Any, tz: ZoneInfo) -> Any:
 
 
 def _score_commitment_fields(
-    checks: list[str], expect: dict[str, Any], text: str | None, due_at: Any, tz: ZoneInfo
+    checks: list[str],
+    expect: dict[str, Any],
+    text: str | None,
+    due_at: Any,
+    tz: ZoneInfo,
+    reminder_lead_minutes: int | None = None,
 ) -> bool:
     ok = True
     due_at = _to_local(due_at, tz)
+
+    if "reminder_lead_minutes" in expect:
+        if reminder_lead_minutes == expect["reminder_lead_minutes"]:
+            checks.append(f"PASS reminder_lead_minutes ({reminder_lead_minutes})")
+        else:
+            checks.append(
+                f"FAIL reminder_lead_minutes: expected {expect['reminder_lead_minutes']}, "
+                f"got {reminder_lead_minutes}"
+            )
+            ok = False
 
     if "due_at_null" in expect:
         if expect["due_at_null"]:
@@ -239,7 +254,9 @@ def run_case(case: dict[str, Any]) -> CaseResult:
             return CaseResult(case["id"], case["category"], pipeline, False, error=error)
         text = commitment.text
         due_at = commitment.due_at
-        ok = _score_commitment_fields(checks, case["expect"], text, due_at, tz)
+        ok = _score_commitment_fields(
+            checks, case["expect"], text, due_at, tz, commitment.reminder_lead_minutes
+        )
         if "reminder_phrase_judge" in case["expect"]:
             passed, reason = judge_reminder_phrase(
                 case["expect"]["reminder_phrase_judge"], case["message"], commitment.reminder_phrase

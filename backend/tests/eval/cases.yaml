@@ -9,15 +9,16 @@
 # not required, just keeps the mental model consistent.
 #
 # pipeline: "parse" exercises CommitmentParserService (POST
-# /commitments/parse — text/due_at/reminder_phrase only, no recurrence).
-# pipeline: "chat" exercises ChatService (POST /chat — adds intent
-# classification + recurrence on top).
+# /commitments/parse — text/due_at/reminder_phrase/reminder_lead_minutes,
+# no recurrence). pipeline: "chat" exercises ChatService (POST /chat —
+# adds intent classification + recurrence on top).
 #
 # expect fields (all optional, only assert what's given):
 #   due_at_date: "YYYY-MM-DD" | due_at_time: "HH:MM" | due_at_null: true
 #   text_contains / text_not_contains: substrings, case-insensitive
 #   intent: "add_commitment" | "query" | "clarify" | "general"
 #   recurrence: "none" | "daily" | "weekly"
+#   reminder_lead_minutes: int
 #   reminder_phrase_judge: rubric text -> scored by a real LLM-as-judge call
 
 cases:
@@ -179,6 +180,36 @@ cases:
     expect:
       due_at_date: "2026-05-12"
       due_at_time: "14:00"
+
+  # ---------------------------------------------------------------------
+  # reminder_lead_time (A5: inferred from task nature, standalone parser)
+  # ---------------------------------------------------------------------
+  - id: lead_time_meeting_defaults_15
+    category: reminder_lead_time
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "client meeting at 2pm today"
+    expect:
+      reminder_lead_minutes: 15
+
+  - id: lead_time_plain_alarm_is_zero
+    category: reminder_lead_time
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "call mom tomorrow at 3pm"
+    expect:
+      reminder_lead_minutes: 0
+
+  - id: lead_time_explicit_minutes_before
+    category: reminder_lead_time
+    pipeline: parse
+    now: "2026-05-12T09:00:00"
+    timezone: America/Toronto
+    message: "remind me 30 minutes before my dentist appointment at 4pm"
+    expect:
+      reminder_lead_minutes: 30
 
   # ---------------------------------------------------------------------
   # text_extraction (imperative rephrasing, filler removal)

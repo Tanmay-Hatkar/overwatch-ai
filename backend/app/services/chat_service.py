@@ -141,6 +141,8 @@ class ChatService:
             reply=result.reply,
             intent=result.intent,
             commitment=commitment,
+            clarify_kind=result.clarify_kind if result.intent == "clarify" else None,
+            clarify_options=result.clarify_options if result.intent == "clarify" else None,
         )
 
     # ------------------------------------------------------------------

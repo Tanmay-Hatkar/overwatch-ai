@@ -8,7 +8,6 @@ structured action metadata so the UI can update.
 """
 
 from typing import Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,6 +59,14 @@ class ChatRequest(BaseModel):
     )
 
 
+# For intent='clarify': what kind of follow-up this is, so the client can
+# render a purpose-built widget (time picker / quick-reply chips) instead
+# of a plain text bubble the user has to type a free-text answer into.
+# 'open' is the fallback when nothing more specific fits — same as today's
+# behavior, a normal reply bubble expecting a free-text answer.
+ClarifyKind = Literal["time", "duration", "confirm_recurring", "confirm_target", "open"]
+
+
 class ChatResponse(BaseModel):
     """Response body for POST /chat."""
 
@@ -68,6 +75,27 @@ class ChatResponse(BaseModel):
     commitment: CommitmentResponse | None = Field(
         default=None,
         description="If intent='add_commitment', the created commitment record.",
+    )
+    clarify_kind: ClarifyKind | None = Field(
+        default=None,
+        description=(
+            "Only set when intent='clarify'. Tells the client what kind of "
+            "follow-up UI to render. 'time'/'duration' with no clarify_options "
+            "means the client should offer a time/duration picker; "
+            "'confirm_recurring'/'confirm_target' pairs with clarify_options "
+            "for tap-only quick-reply chips; 'open' falls back to a normal "
+            "free-text reply bubble."
+        ),
+    )
+    clarify_options: list[str] | None = Field(
+        default=None,
+        max_length=4,
+        description=(
+            "Only meaningful when clarify_kind is 'confirm_recurring' or "
+            "'confirm_target' (or 'time' with a small fixed set of likely "
+            "candidates, e.g. ['Today', 'Tomorrow']). Each option, tapped, is "
+            "sent verbatim as the next chat message — no new endpoint needed."
+        ),
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -98,3 +126,6 @@ class _ChatIntentResult(BaseModel):
     # When present (non-empty), it takes precedence over text/due_at.
     items: list[CommitmentDraft] | None = None
     reply: str  # Always; the natural-language acknowledgment / answer / chat
+    # Only meaningful when intent='clarify' — see ClarifyKind/ChatResponse.
+    clarify_kind: ClarifyKind | None = None
+    clarify_options: list[str] | None = None

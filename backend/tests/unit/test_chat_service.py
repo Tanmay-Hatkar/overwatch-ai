@@ -267,6 +267,58 @@ def test_clarify_intent_creates_nothing(
     assert service.list(UID) == []       # nothing junk was created
 
 
+def test_clarify_passes_through_kind_and_options_for_chip_rendering(
+    chat_service: ChatService,
+) -> None:
+    """clarify_kind + clarify_options let the client render tap-only chips
+    instead of a plain text bubble (A3: structured clarify)."""
+    fake = _llm_response(
+        "clarify",
+        reply="Got it — want 'Start Night Routine' to repeat every day?",
+        clarify_kind="confirm_recurring",
+        clarify_options=["Yes, daily", "No, just once"],
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="add it to my routine"))
+
+    assert result.intent == "clarify"
+    assert result.clarify_kind == "confirm_recurring"
+    assert result.clarify_options == ["Yes, daily", "No, just once"]
+
+
+def test_clarify_kind_defaults_to_none_when_llm_omits_it(
+    chat_service: ChatService,
+) -> None:
+    """An older/degraded LLM response with no clarify_kind at all falls back
+    to None cleanly — the client's existing free-text bubble still works."""
+    fake = _llm_response("clarify", reply="What time works?")
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="sometime next week"))
+
+    assert result.intent == "clarify"
+    assert result.clarify_kind is None
+    assert result.clarify_options is None
+
+
+def test_clarify_fields_are_dropped_on_non_clarify_intents(
+    chat_service: ChatService,
+) -> None:
+    """clarify_kind/clarify_options must never leak onto a non-clarify
+    response, even if the LLM's JSON happened to include stray values."""
+    fake = _llm_response(
+        "general",
+        reply="Hey.",
+        clarify_kind="open",
+        clarify_options=["should", "never", "appear"],
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="hi"))
+
+    assert result.intent == "general"
+    assert result.clarify_kind is None
+    assert result.clarify_options is None
+
+
 def test_query_intent_prompt_includes_current_state(
     chat_service: ChatService, service: CommitmentService
 ) -> None:

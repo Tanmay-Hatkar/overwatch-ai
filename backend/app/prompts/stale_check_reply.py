@@ -59,7 +59,7 @@ SYSTEM_PROMPT = (
     "User: \"nah, don\'t need to anymore\"\n"
     'Output: {"outcome": "abandon", "new_due_at": null, "reply": "Got it — letting that one go."}\n'
     "\n"
-    "Pending: Still the plan — \"Finish the deck\"? (today is Mon 2026-05-12)\n"
+    "Pending: Still the plan — \"Finish the deck\"? (today is Tue 2026-05-12)\n"
     "User: \"yeah but tomorrow at 5pm now\"\n"
     'Output: {"outcome": "reschedule", "new_due_at": "2026-05-13T17:00:00", "reply": "Moved to tomorrow at 5pm."}\n'
     "\n"

@@ -84,6 +84,20 @@ class CommitmentBase(BaseModel):
             "to a templated string in that case."
         ),
     )
+    group_name: str = Field(
+        default="",
+        max_length=100,
+        description=(
+            "Optional user-defined section label (e.g. 'Job Hunt'). '' = "
+            "ungrouped. Column predates this exposure (migration 008) — "
+            "ADR-0023 cut the manual-grouping UI as ceremony on top of a "
+            "chat-first capture flow; reintroduced for the React Native app "
+            "(ADR-0025) where creation is already a structured form, so one "
+            "more field isn't the same added ceremony. User-created and "
+            "reused, not a fixed enum — free text, client suggests previously "
+            "used values."
+        ),
+    )
 
 
 class CommitmentCreate(CommitmentBase):
@@ -113,6 +127,7 @@ class CommitmentUpdate(BaseModel):
     recurrence: Recurrence | None = None
     reminder_lead_minutes: int | None = Field(default=None, ge=0, le=1440)
     reminder_phrase: str | None = Field(default=None, max_length=200)
+    group_name: str | None = Field(default=None, max_length=100)
 
 
 class CommitmentResponse(CommitmentBase):
@@ -126,6 +141,15 @@ class CommitmentResponse(CommitmentBase):
     status: CommitmentStatus
     created_at: datetime
     updated_at: datetime
+    stale_check_sent_at: datetime | None = Field(
+        default=None,
+        description=(
+            "When the one-time 'still the plan?' check-in was asked (ADR-0017). "
+            "None = not asked yet. Exposed so the client can schedule its own "
+            "native-local-notification check-in (reliable, no push dependency) "
+            "and skip commitments the server has already asked about."
+        ),
+    )
 
     # Allow Pydantic to construct this model from objects with matching
     # attributes (not just dicts). Useful when converting from a dataclass

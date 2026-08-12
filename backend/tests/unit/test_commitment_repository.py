@@ -324,6 +324,19 @@ def test_mark_stale_check_sent_sets_timestamp(
     assert row["stale_check_sent_at"] is not None
 
 
+def test_stale_check_sent_at_exposed_on_response(repo: CommitmentRepository) -> None:
+    """stale_check_sent_at round-trips through CommitmentResponse — the
+    client needs it to schedule its own native-local-notification check-in
+    and skip commitments the server has already asked about."""
+    c = repo.create(UID, text="A", due_at=None)
+    assert c.stale_check_sent_at is None
+
+    repo.mark_stale_check_sent(UID, c.id)
+    fetched = repo.get(UID, c.id)
+    assert fetched is not None
+    assert fetched.stale_check_sent_at is not None
+
+
 def test_list_pending_stale_checks_returns_sent_unacknowledged(repo: CommitmentRepository) -> None:
     """A commitment that's been asked about but not yet acknowledged is pending."""
     c = repo.create(UID, text="Pending", due_at=None)

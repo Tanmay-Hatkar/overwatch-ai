@@ -13,6 +13,7 @@ verifies the full chain works end-to-end.
 """
 
 import json
+from datetime import datetime as real_datetime, timezone as dt_timezone
 from uuid import uuid4
 from unittest.mock import patch
 
@@ -114,6 +115,65 @@ def test_drops_empty_reminder_phrase_gracefully(parser: CommitmentParserService)
         result = parser.parse_and_create(UID, "test")
 
     assert result.reminder_phrase is None
+
+
+# ---------------------------------------------------------------------------
+# Timezone handling — regression coverage for the "today" resolution bug
+# ---------------------------------------------------------------------------
+
+
+def test_today_is_resolved_in_the_caller_supplied_timezone(
+    parser: CommitmentParserService,
+) -> None:
+    """
+    Previously, "today" was computed with a bare datetime.now() — the
+    server's clock, ignoring the caller's timezone entirely (there was no
+    timezone parameter at all). Pin "now" to 2026-05-16 23:30 UTC, which is
+    still May 16 in UTC but already May 17 in Asia/Tokyo (UTC+9), and
+    confirm the date lookup table shown to the LLM reflects the user's
+    local calendar date, not the server's.
+    """
+    fixed_utc = real_datetime(2026, 5, 16, 23, 30, tzinfo=dt_timezone.utc)
+    fake = json.dumps({"text": "x", "due_at": None})
+    captured: dict[str, str] = {}
+
+    def fake_call_llm(system_prompt: str, user_prompt: str, temperature: float) -> str:
+        captured["user_prompt"] = user_prompt
+        return fake
+
+    with patch("app.services.commitment_parser_service.datetime") as mock_dt:
+        mock_dt.now.side_effect = lambda tz=None: (
+            fixed_utc.astimezone(tz) if tz is not None else fixed_utc
+        )
+        with patch(LLM_PATCH_TARGET, side_effect=fake_call_llm):
+            parser.parse_and_create(UID, "test", "Asia/Tokyo")
+
+    prompt = captured["user_prompt"]
+    assert "2026-05-17" in prompt
+    assert "2026-05-16" not in prompt
+
+
+def test_today_falls_back_to_utc_when_no_timezone_given(
+    parser: CommitmentParserService,
+) -> None:
+    """No timezone supplied (e.g. an older client) falls back to UTC, matching
+    resolve_timezone()'s documented default — not an error, not a crash."""
+    fixed_utc = real_datetime(2026, 5, 16, 23, 30, tzinfo=dt_timezone.utc)
+    fake = json.dumps({"text": "x", "due_at": None})
+    captured: dict[str, str] = {}
+
+    def fake_call_llm(system_prompt: str, user_prompt: str, temperature: float) -> str:
+        captured["user_prompt"] = user_prompt
+        return fake
+
+    with patch("app.services.commitment_parser_service.datetime") as mock_dt:
+        mock_dt.now.side_effect = lambda tz=None: (
+            fixed_utc.astimezone(tz) if tz is not None else fixed_utc
+        )
+        with patch(LLM_PATCH_TARGET, side_effect=fake_call_llm):
+            parser.parse_and_create(UID, "test", None)
+
+    assert "2026-05-16" in captured["user_prompt"]
 
 
 def test_trims_whitespace_from_reminder_phrase(parser: CommitmentParserService) -> None:

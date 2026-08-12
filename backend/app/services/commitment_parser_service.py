@@ -16,12 +16,14 @@ import json
 import logging
 from datetime import datetime, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from app.agents.orchestrator import call_llm
 from app.config import settings
 from app.models.commitment import CommitmentCreate, CommitmentResponse
 from app.prompts.commitment_parser import SYSTEM_PROMPT, USER_TEMPLATE
 from app.services.commitment_service import CommitmentService
+from app.services.timezone_utils import resolve_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +43,19 @@ class CommitmentParserService:
     def __init__(self, commitment_service: CommitmentService) -> None:
         self._service = commitment_service
 
-    def parse_and_create(self, user_id: UUID, message: str) -> CommitmentResponse:
+    def parse_and_create(
+        self, user_id: UUID, message: str, timezone: str | None = None
+    ) -> CommitmentResponse:
         """
         Parse a natural language message and create the commitment for user_id.
 
         Args:
             user_id: Owner of the new commitment.
             message: User's free-form input (e.g., "call mom tomorrow at 3pm").
+            timezone: IANA timezone name used to resolve "today"/"now" for
+                relative-date parsing. None falls back to UTC. Without this,
+                a user meaningfully offset from UTC gets the wrong "today"
+                for messages sent in the gap between the two dates.
 
         Returns:
             The newly created CommitmentResponse.
@@ -56,7 +64,8 @@ class CommitmentParserService:
             CommitmentParseError: If the LLM is unavailable or returns
                 output that can't be parsed into a valid commitment.
         """
-        user_prompt = self._build_user_prompt(message)
+        user_tz = resolve_timezone(timezone)
+        user_prompt = self._build_user_prompt(message, user_tz)
 
         raw = call_llm(
             system_prompt=SYSTEM_PROMPT,
@@ -80,12 +89,16 @@ class CommitmentParserService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_user_prompt(self, message: str) -> str:
-        """Inject today's date + a 14-day lookup table into the user prompt."""
-        today = datetime.now()
+    def _build_user_prompt(self, message: str, user_tz: ZoneInfo) -> str:
+        """Inject the user's local now + a 14-day lookup table into the user prompt."""
+        today = datetime.now(user_tz)
         day_names = ["Monday", "Tuesday", "Wednesday", "Thursday",
                      "Friday", "Saturday", "Sunday"]
         today_name = day_names[today.weekday()]
+
+        # Current local clock time, e.g. "4:42 PM" — lets the LLM resolve
+        # "in 30 minutes", "tonight at 7", "in an hour" correctly.
+        now_time = today.strftime("%I:%M %p").lstrip("0")
 
         # 14 days starting from today gives the LLM enough range to
         # handle "Friday", "next Tuesday", "in 10 days", etc.
@@ -99,6 +112,7 @@ class CommitmentParserService:
 
         return USER_TEMPLATE.format(
             message=message,
+            now_time=now_time,
             today_name=today_name,
             today_date=today.date().isoformat(),
             date_table=date_table,

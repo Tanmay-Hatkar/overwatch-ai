@@ -171,3 +171,12 @@ class CommitmentParseRequest(BaseModel):
         max_length=500,
         description="Free-form natural language describing the commitment.",
     )
+    timezone: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "IANA timezone name (e.g. 'America/Toronto'), used to resolve "
+            "'today' for relative-date parsing. None falls back to UTC — "
+            "see resolve_timezone()."
+        ),
+    )

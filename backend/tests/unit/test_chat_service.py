@@ -529,19 +529,63 @@ def test_pending_check_reschedule_updates_due_at(
     assert service.list_pending_stale_checks(UID) == []
 
 
-def test_pending_check_reschedule_without_new_time_leaves_due_at_unchanged(
+def test_pending_check_reschedule_without_new_time_stays_pending(
     chat_service: ChatService, service: CommitmentService
 ) -> None:
     """If the classifier can't extract a new time, we never guess one —
-    due_at is left as-is (still acknowledged so it isn't re-intercepted)."""
+    due_at is left as-is. Regression coverage: this check-in must stay
+    pending (NOT acknowledged) so the user's actual next reply gets a real
+    chance to supply a time, instead of the check-in silently closing
+    forever with due_at never having moved (stale_check_sent_at is a
+    one-way door — acknowledging here would mean this commitment can never
+    be asked about again)."""
     c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
     service.mark_stale_check_sent(UID, c.id)
 
-    fake = _stale_llm_response("reschedule", new_due_at=None, reply="No problem — when though?")
+    fake = _stale_llm_response(
+        "reschedule",
+        new_due_at=None,
+        reply="No problem — want to pick a new time, or should I just call it done for now?",
+    )
     with patch(LLM_PATCH, return_value=fake):
-        chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
+        result = chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
 
     assert service.get(UID, c.id).due_at is None
+    assert result.reply == "No problem — want to pick a new time, or should I just call it done for now?"
+    # Still pending — deferred, not resolved.
+    pending_ids = [p.id for p in service.list_pending_stale_checks(UID)]
+    assert c.id in pending_ids
+
+
+def test_pending_check_reschedule_resolves_on_a_later_reply_with_a_time(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """Follow-up to the above: once the reschedule-without-a-time case
+    left the check-in pending, the user's NEXT message gets intercepted
+    again — and if that one has a concrete time, it resolves normally
+    (due_at moves, check-in finally acknowledged)."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    first = _stale_llm_response(
+        "reschedule", new_due_at=None, reply="Want to pick a new time, or call it done?"
+    )
+    with patch(LLM_PATCH, return_value=first):
+        chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
+    assert service.list_pending_stale_checks(UID) != []  # still pending after first reply
+
+    second = _stale_llm_response(
+        "reschedule", new_due_at="2026-07-10T17:00:00", reply="Moved to tomorrow at 5pm."
+    )
+    with patch(LLM_PATCH, return_value=second):
+        result = chat_service.handle(
+            UID, ChatRequest(message="let's say tomorrow at 5pm", timezone="America/Toronto")
+        )
+
+    assert result.reply == "Moved to tomorrow at 5pm."
+    updated = service.get(UID, c.id)
+    assert updated.due_at is not None
+    assert updated.due_at.astimezone(UTC).hour == 21  # 17:00 EDT == 21:00 UTC
     assert service.list_pending_stale_checks(UID) == []
 
 

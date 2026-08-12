@@ -316,8 +316,13 @@ class ChatService:
             return None
 
         for c in pending:
-            self._apply_stale_check_outcome(user_id, c, result, user_tz)
-            self._service.acknowledge_stale_check(user_id, c.id)
+            resolved = self._apply_stale_check_outcome(user_id, c, result, user_tz)
+            if resolved:
+                self._service.acknowledge_stale_check(user_id, c.id)
+            # else: a reschedule with no extractable time is left pending
+            # (not acknowledged) so the user's actual next reply gets a
+            # real chance to give one, instead of the check-in silently
+            # closing with due_at never having moved.
 
         if self._conversation is not None:
             self._conversation.append(user_id, "user", request.message)
@@ -331,24 +336,37 @@ class ChatService:
         commitment: CommitmentResponse,
         result: _StaleCheckReplyResult,
         user_tz: ZoneInfo,
-    ) -> None:
+    ) -> bool:
         """
         Apply a classified stale-check outcome to one pending commitment.
 
-        still_valid / unrelated: no state change beyond acknowledgement
-        (handled by the caller). abandon: mark abandoned — a choice the
-        user made, never framed as a failure. reschedule: move due_at if
-        the LLM extracted a new time; leave it unchanged otherwise (never
-        guess at a time the user didn't give).
+        still_valid: no state change. abandon: mark abandoned — a choice
+        the user made, never framed as a failure. reschedule: move due_at
+        if the LLM extracted a new time; never guess at a time the user
+        didn't give.
+
+        Returns:
+            True if this outcome is resolved and the check-in should be
+            acknowledged (still_valid, abandon, or reschedule-with-a-time).
+            False for a reschedule with no extractable time — that's not
+            resolved, just deferred: the caller must NOT acknowledge, so
+            the user's next reply gets a real chance to supply one instead
+            of the check-in silently closing with due_at never having
+            moved (the prompt's reply text asks for the time explicitly
+            in this case — see stale_check_reply.py).
         """
         if result.outcome == "abandon":
             self._service.update(
                 user_id, commitment.id, CommitmentUpdate(status=CommitmentStatus.ABANDONED)
             )
+            return True
         elif result.outcome == "reschedule":
             new_due = self._parse_due_at(result.new_due_at, user_tz)
             if new_due is not None:
                 self._service.update(user_id, commitment.id, CommitmentUpdate(due_at=new_due))
+                return True
+            return False
+        return True  # still_valid
 
     @staticmethod
     def _build_stale_check_prompt(

@@ -28,7 +28,9 @@ SYSTEM_PROMPT = (
     "  reschedule — they still want to do it, but at a different time. "
     "    Extract the new due_at as ISO 8601 'YYYY-MM-DDTHH:MM:SS' (local, no "
     "    offset). If they gave a new time, set new_due_at; if they didn't "
-    "    give a specific time, use null.\n"
+    "    give a specific time, use null AND make the reply ASK for one — "
+    "    this check-in stays open until a time is given, so don't write a "
+    "    reply that sounds like it's already handled.\n"
     "  unrelated — the message doesn't address the check-in at all (they're "
     "    asking about something else, adding a new commitment, making small "
     "    talk, etc.). Use this whenever in doubt — never guess at an outcome "
@@ -60,6 +62,10 @@ SYSTEM_PROMPT = (
     "Pending: Still the plan — \"Finish the deck\"? (today is Mon 2026-05-12)\n"
     "User: \"yeah but tomorrow at 5pm now\"\n"
     'Output: {"outcome": "reschedule", "new_due_at": "2026-05-13T17:00:00", "reply": "Moved to tomorrow at 5pm."}\n'
+    "\n"
+    "Pending: Still the plan — \"Finish the deck\"?\n"
+    "User: \"gonna move it but not sure when yet\"\n"
+    'Output: {"outcome": "reschedule", "new_due_at": null, "reply": "No problem — want to pick a new time, or should I just call it done for now?"}\n'
     "\n"
     "Pending: Still the plan — \"Finish the deck\"?\n"
     "User: \"also remind me to call mom later\"\n"

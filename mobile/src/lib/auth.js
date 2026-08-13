@@ -24,20 +24,28 @@ export async function getStoredToken() {
 
 /**
  * Persist the bearer token in secure storage. Also mirrors it into the
- * home-screen widget's own native config store (ADR-0020) -- best-effort,
- * never blocks sign-in on a widget-config failure.
+ * home-screen widget's own native config store (ADR-0020). Awaited (not
+ * fire-and-forget) so the mirror is done before this function returns --
+ * configureWidget()/Widget.configure() still catch their own errors
+ * internally, so a widget-config failure here can't reject this call or
+ * block sign-in.
  */
 export async function setStoredToken(token) {
   await SecureStore.setItemAsync(TOKEN_KEY, token)
-  configureWidget(token)
+  await configureWidget(token)
 }
 
-/** Remove the stored bearer token (logout). Also clears the widget's config. */
+/**
+ * Remove the stored bearer token (logout). Also clears the widget's config
+ * -- awaited so logout can't return with the widget still holding a stale
+ * token (a fire-and-forget call here previously left a real window where
+ * the widget kept fetching/displaying the logged-out user's commitments).
+ */
 export async function clearStoredToken() {
   try {
     await SecureStore.deleteItemAsync(TOKEN_KEY)
   } catch {
     // nothing to clear
   }
-  clearWidget()
+  await clearWidget()
 }

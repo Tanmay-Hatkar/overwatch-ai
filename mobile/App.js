@@ -8,6 +8,8 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext'
 import LoginScreen from './src/screens/LoginScreen'
 import TodoListScreen from './src/screens/TodoListScreen'
 import ChatScreen from './src/screens/ChatScreen'
+import BriefingScreen from './src/screens/BriefingScreen'
+import ReflectionScreen from './src/screens/ReflectionScreen'
 import { ensureNotificationPermission, initNotificationActions } from './src/lib/notifications'
 import { color } from './src/theme'
 
@@ -47,6 +49,8 @@ function Root() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Todos" component={TodoListScreen} />
       <Stack.Screen name="Chat" component={ChatScreen} options={{ animation: 'slide_from_bottom' }} />
+      <Stack.Screen name="Briefing" component={BriefingScreen} options={{ animation: 'slide_from_bottom' }} />
+      <Stack.Screen name="Reflection" component={ReflectionScreen} options={{ animation: 'slide_from_bottom' }} />
     </Stack.Navigator>
   )
 }

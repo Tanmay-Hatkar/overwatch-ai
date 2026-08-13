@@ -166,6 +166,20 @@ export default function TodoListScreen({ navigation }) {
         <Text style={styles.headerTitle}>Todos</Text>
         <View style={styles.headerActions}>
           <Pressable
+            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+            onPress={() => navigation.navigate('Briefing')}
+            hitSlop={8}
+          >
+            <Text style={styles.iconButtonText}>☀️</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+            onPress={() => navigation.navigate('Reflection')}
+            hitSlop={8}
+          >
+            <Text style={styles.iconButtonText}>🌙</Text>
+          </Pressable>
+          <Pressable
             style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
             onPress={() => navigation.navigate('Chat')}
             hitSlop={8}
@@ -307,6 +321,17 @@ const styles = StyleSheet.create({
     borderColor: color.border,
   },
   chatButtonText: { color: color.textPrimary, fontSize: font.sm + 1, fontWeight: '600' },
+  iconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.pill,
+    backgroundColor: color.surfaceRaised,
+    borderWidth: 1,
+    borderColor: color.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconButtonText: { fontSize: font.md },
   avatar: {
     width: 34,
     height: 34,

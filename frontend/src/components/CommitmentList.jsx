@@ -43,9 +43,9 @@ export default function CommitmentList({ commitments, onChange }) {
     }
   }
 
-  async function handleEdit(commitment, newText) {
+  async function handleEdit(commitment, changes) {
     try {
-      await updateCommitment(commitment.id, { text: newText })
+      await updateCommitment(commitment.id, changes)
       onChange()
     } catch (err) {
       toast.error(err.message || "Couldn't save edit.")
@@ -120,7 +120,7 @@ export default function CommitmentList({ commitments, onChange }) {
                 commitment={c}
                 onToggle={() => handleToggleDone(c)}
                 onDelete={() => handleDelete(c)}
-                onEdit={(newText) => handleEdit(c, newText)}
+                onEdit={(changes) => handleEdit(c, changes)}
               />
             ))}
           </ul>
@@ -139,7 +139,7 @@ export default function CommitmentList({ commitments, onChange }) {
                 commitment={c}
                 onToggle={() => handleToggleDone(c)}
                 onDelete={() => handleDelete(c)}
-                onEdit={(newText) => handleEdit(c, newText)}
+                onEdit={(changes) => handleEdit(c, changes)}
               />
             ))}
           </ul>
@@ -169,30 +169,43 @@ function FilterButton({ active, onClick, count, children }) {
 /**
  * Single row for one commitment.
  *
- * Click the text to edit it inline. Enter saves, Escape cancels, blur also
- * saves (so clicking elsewhere doesn't lose your changes). Empty text on
- * save reverts to original.
+ * Click the text to edit it inline — this also reveals a second field for
+ * reminder_phrase (the line spoken/shown at reminder time, ADR-0021's "You
+ * said you'd..." recall). Enter saves, Escape cancels, blur also saves
+ * (tracked at the container level so tabbing between the two fields
+ * doesn't save prematurely — only losing focus entirely does). Empty text
+ * on save reverts to original; an emptied reminder_phrase clears it back
+ * to null (falls back to the templated reminder text).
  */
 function CommitmentItem({ commitment, onToggle, onDelete, onEdit }) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState(commitment.text)
+  const [editPhrase, setEditPhrase] = useState(commitment.reminder_phrase || '')
   const isDone = commitment.status === 'done'
   const dueInfo = formatDueAt(commitment.due_at, isDone)
 
   async function commitEdit() {
-    const trimmed = editText.trim()
-    // No change or empty → just exit edit mode
-    if (!trimmed || trimmed === commitment.text) {
+    const trimmedText = editText.trim()
+    const trimmedPhrase = editPhrase.trim()
+    const changes = {}
+    if (trimmedText && trimmedText !== commitment.text) changes.text = trimmedText
+    if (trimmedPhrase !== (commitment.reminder_phrase || '')) {
+      changes.reminder_phrase = trimmedPhrase || null
+    }
+
+    if (Object.keys(changes).length === 0) {
       setEditText(commitment.text)
+      setEditPhrase(commitment.reminder_phrase || '')
       setEditing(false)
       return
     }
-    await onEdit(trimmed)
+    await onEdit(changes)
     setEditing(false)
   }
 
   function cancelEdit() {
     setEditText(commitment.text)
+    setEditPhrase(commitment.reminder_phrase || '')
     setEditing(false)
   }
 
@@ -206,9 +219,18 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit }) {
     }
   }
 
+  function handleGroupBlur(e) {
+    // Only commit when focus leaves BOTH fields, not when tabbing from
+    // text to reminder_phrase (relatedTarget stays inside the container).
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      commitEdit()
+    }
+  }
+
   function startEditing() {
     if (isDone) return  // don't edit done items
     setEditText(commitment.text)
+    setEditPhrase(commitment.reminder_phrase || '')
     setEditing(true)
   }
 
@@ -230,28 +252,54 @@ function CommitmentItem({ commitment, onToggle, onDelete, onEdit }) {
       />
       <div className="flex-1 min-w-0">
         {editing ? (
-          <input
-            type="text"
-            value={editText}
-            onChange={(e) => setEditText(e.target.value)}
-            onBlur={commitEdit}
-            onKeyDown={handleKeyDown}
-            autoFocus
-            className="w-full bg-transparent text-sm border-b border-orange-500 focus:outline-none px-0 py-0.5"
-          />
+          <div onBlur={handleGroupBlur}>
+            <input
+              type="text"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              autoFocus
+              className="w-full bg-transparent text-sm border-b border-orange-500 focus:outline-none px-0 py-0.5"
+            />
+            <div className="mt-1.5">
+              <label className="block text-[9px] uppercase tracking-wider text-zinc-600 mb-0.5">
+                How I'll remind you
+              </label>
+              <input
+                type="text"
+                value={editPhrase}
+                onChange={(e) => setEditPhrase(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="e.g. You said you'd call mom at 3pm — calling now?"
+                maxLength={200}
+                className="w-full bg-transparent text-xs text-zinc-400 border-b border-[#3a3a3a] focus:border-orange-500 focus:outline-none px-0 py-0.5"
+              />
+            </div>
+          </div>
         ) : (
-          <p
-            onClick={startEditing}
-            className={`text-sm ${isDone ? 'line-through' : 'cursor-text'}`}
-            title={isDone ? '' : 'Click to edit'}
-          >
-            {commitment.text}
-            {commitment.recurrence && commitment.recurrence !== 'none' && (
-              <span className="ml-2 inline-flex items-center gap-0.5 align-middle text-[9px] font-semibold uppercase tracking-wider text-orange-300 bg-orange-500/[0.1] border border-orange-500/30 rounded px-1 py-0.5">
-                ↻ {commitment.recurrence}
-              </span>
+          <>
+            <p
+              onClick={startEditing}
+              className={`text-sm ${isDone ? 'line-through' : 'cursor-text'}`}
+              title={isDone ? '' : 'Click to edit'}
+            >
+              {commitment.text}
+              {commitment.recurrence && commitment.recurrence !== 'none' && (
+                <span className="ml-2 inline-flex items-center gap-0.5 align-middle text-[9px] font-semibold uppercase tracking-wider text-orange-300 bg-orange-500/[0.1] border border-orange-500/30 rounded px-1 py-0.5">
+                  ↻ {commitment.recurrence}
+                </span>
+              )}
+            </p>
+            {commitment.reminder_phrase && (
+              <p
+                onClick={startEditing}
+                className="text-[10px] mt-0.5 text-zinc-600 italic truncate cursor-text"
+                title={`Click to edit: ${commitment.reminder_phrase}`}
+              >
+                🔔 “{commitment.reminder_phrase}”
+              </p>
             )}
-          </p>
+          </>
         )}
         {/* Due time row — read-only. To change a commitment's time, say so
             in chat (ADR-0023: no inline reschedule UI). */}

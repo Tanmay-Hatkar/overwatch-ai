@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Tier-2 ring escalation (ADR-0019). Merged into the consuming app's
+         manifest by the standard AGP library manifest merger. -->
+    <application>
+        <activity
+            android:name="expo.modules.ringalarm.RingActivity"
+            android:theme="@style/RingAlarmTheme"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:exported="false" />
+
+        <receiver android:name="expo.modules.ringalarm.RingAlarmReceiver" android:exported="false" />
+        <receiver android:name="expo.modules.ringalarm.RingActionReceiver" android:exported="false" />
+    </application>
+</manifest>

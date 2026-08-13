@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  commitment_widget_loading.xml — placeholder RemoteViews layout (ADR-0020).
+
+  AppWidgetProviderInfo requires an android:initialLayout pointing at a
+  plain (non-Compose) layout resource. Jetpack Glance replaces this with
+  its real Compose-based UI (see CommitmentWidget.kt) at first composition,
+  so this file only needs to cover the brief instant between the widget
+  being placed and that first composition landing. Intentionally minimal.
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/commitment_widget_loading_text"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#1C1B1F"
+    android:gravity="center"
+    android:padding="12dp"
+    android:text="@string/commitment_widget_loading"
+    android:textColor="#FFFFFF" />

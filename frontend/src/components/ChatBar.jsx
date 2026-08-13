@@ -148,13 +148,13 @@ export default function ChatBar({ onAction, onHeightChange }) {
     }
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault()
-    if (listening) stopListening()
-    const trimmed = input.trim()
+  // Shared by both the form submit and a tapped clarify chip — a chip's
+  // label is sent as the next message verbatim, through the exact same
+  // pipeline as if the user had typed and sent it (no new endpoint).
+  async function sendMessage(text) {
+    const trimmed = text.trim()
     if (!trimmed || busy) return
 
-    // Optimistically append the user's message
     const userTurn = { role: 'user', content: trimmed }
     const nextHistory = [...history, userTurn].slice(-MAX_HISTORY_TURNS)
     setHistory(nextHistory)
@@ -163,7 +163,15 @@ export default function ChatBar({ onAction, onHeightChange }) {
 
     try {
       const result = await sendChat(trimmed, nextHistory.slice(-HISTORY_FOR_PROMPT - 1, -1))
-      const assistantTurn = { role: 'assistant', content: result.reply }
+      const assistantTurn = {
+        role: 'assistant',
+        content: result.reply,
+        // Only meaningful when intent === 'clarify'; undefined otherwise so
+        // ChatMessage never renders chips on a stale/reloaded turn (history
+        // reloaded from the server only ever carries role+content).
+        clarifyKind: result.intent === 'clarify' ? result.clarify_kind : undefined,
+        clarifyOptions: result.intent === 'clarify' ? result.clarify_options : undefined,
+      }
       setHistory((prev) => [...prev, assistantTurn].slice(-MAX_HISTORY_TURNS))
 
       // Speak the reply aloud if the user enabled text-to-speech.
@@ -183,6 +191,12 @@ export default function ChatBar({ onAction, onHeightChange }) {
     } finally {
       setBusy(false)
     }
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    if (listening) stopListening()
+    await sendMessage(input)
   }
 
   async function handleClear() {
@@ -211,8 +225,17 @@ export default function ChatBar({ onAction, onHeightChange }) {
           {/* Message history — collapsed by default if empty */}
           {history.length > 0 && !collapsed && (
             <div className="max-h-48 overflow-y-auto mb-3 space-y-2 pr-1">
-              {history.slice(-6).map((turn, i) => (
-                <ChatMessage key={`${history.length}-${i}`} turn={turn} />
+              {history.slice(-6).map((turn, i, arr) => (
+                <ChatMessage
+                  key={`${history.length}-${i}`}
+                  turn={turn}
+                  // Chips are only actionable on the most recent turn — once
+                  // the conversation has moved on, an older clarify question
+                  // is no longer what a tap would be answering.
+                  isLatest={i === arr.length - 1}
+                  onChipTap={sendMessage}
+                  disabled={busy}
+                />
               ))}
               <div ref={messagesEndRef} />
             </div>
@@ -318,10 +341,22 @@ function MicIcon() {
   )
 }
 
-function ChatMessage({ turn }) {
+/**
+ * Renders one turn. When an assistant turn is a 'clarify' with
+ * clarify_options (confirm_recurring / confirm_target — a yes/no or
+ * pick-one-of-a-few question), shows tap-only chips instead of leaving
+ * the user to type a free-text answer into the same box. Tapping a chip
+ * sends its exact label as the next message via onChipTap — no new
+ * endpoint, same pipeline as typing it. 'time'/'open' clarify_kinds have
+ * no fixed options and fall back to the plain text bubble, same as today.
+ */
+function ChatMessage({ turn, isLatest, onChipTap, disabled }) {
   const isUser = turn.role === 'user'
+  const showChips =
+    isLatest && !isUser && turn.clarifyOptions && turn.clarifyOptions.length > 0
+
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} gap-1.5`}>
       <div
         className={`max-w-[80%] px-3 py-2 rounded-lg text-sm leading-snug ${
           isUser
@@ -333,6 +368,21 @@ function ChatMessage({ turn }) {
       >
         {turn.content}
       </div>
+      {showChips && (
+        <div className="flex flex-wrap gap-1.5 max-w-[80%]">
+          {turn.clarifyOptions.map((option) => (
+            <button
+              key={option}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChipTap(option)}
+              className="px-3 py-1.5 text-xs font-medium rounded-full border border-orange-500/40 bg-orange-500/[0.08] text-orange-200 hover:bg-orange-500/20 hover:border-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from app.models.chat import ChatRequest, ChatTurn
-from app.models.commitment import CommitmentCreate, CommitmentStatus
+from app.models.commitment import CommitmentCreate, CommitmentStatus, CommitmentUpdate, Recurrence
 from app.providers.mock_calendar_provider import MockCalendarProvider
 from app.services.calendar_service import CalendarService
 from app.services.chat_service import ChatError, ChatService
@@ -91,6 +91,24 @@ def test_add_commitment_creates_record_and_returns_it(chat_service: ChatService)
     assert result.commitment.due_at is not None
     assert result.commitment.due_at.hour == 15
     assert "calling mom" in result.reply.lower()
+
+
+def test_add_commitment_threads_reminder_phrase(chat_service: ChatService) -> None:
+    """add_commitment's reminder_phrase (ADR-0021) is threaded through --
+    previously chat.py's schema never asked for it at all, so anything
+    created via chat fell back to the robotic templated string at
+    reminder time regardless of what the LLM could have said."""
+    fake = _llm_response(
+        "add_commitment",
+        text="Call mom",
+        due_at="2026-06-04T15:00:00",
+        reminder_phrase="You said you'd call mom at 3pm — calling now?",
+        reply="Got it — calling mom Thursday at 3pm.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="call mom tomorrow at 3pm"))
+
+    assert result.commitment.reminder_phrase == "You said you'd call mom at 3pm — calling now?"
 
 
 def test_add_commitment_with_null_due_at(chat_service: ChatService) -> None:
@@ -265,6 +283,178 @@ def test_clarify_intent_creates_nothing(
     assert result.commitment is None
     assert "?" in result.reply           # it's a question
     assert service.list(UID) == []       # nothing junk was created
+
+
+def test_clarify_passes_through_kind_and_options_for_chip_rendering(
+    chat_service: ChatService,
+) -> None:
+    """clarify_kind + clarify_options let the client render tap-only chips
+    instead of a plain text bubble (A3: structured clarify)."""
+    fake = _llm_response(
+        "clarify",
+        reply="Got it — want 'Start Night Routine' to repeat every day?",
+        clarify_kind="confirm_recurring",
+        clarify_options=["Yes, daily", "No, just once"],
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="add it to my routine"))
+
+    assert result.intent == "clarify"
+    assert result.clarify_kind == "confirm_recurring"
+    assert result.clarify_options == ["Yes, daily", "No, just once"]
+
+
+def test_clarify_kind_defaults_to_none_when_llm_omits_it(
+    chat_service: ChatService,
+) -> None:
+    """An older/degraded LLM response with no clarify_kind at all falls back
+    to None cleanly — the client's existing free-text bubble still works."""
+    fake = _llm_response("clarify", reply="What time works?")
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="sometime next week"))
+
+    assert result.intent == "clarify"
+    assert result.clarify_kind is None
+    assert result.clarify_options is None
+
+
+def test_clarify_fields_are_dropped_on_non_clarify_intents(
+    chat_service: ChatService,
+) -> None:
+    """clarify_kind/clarify_options must never leak onto a non-clarify
+    response, even if the LLM's JSON happened to include stray values."""
+    fake = _llm_response(
+        "general",
+        reply="Hey.",
+        clarify_kind="open",
+        clarify_options=["should", "never", "appear"],
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="hi"))
+
+    assert result.intent == "general"
+    assert result.clarify_kind is None
+    assert result.clarify_options is None
+
+
+# ---------------------------------------------------------------------------
+# modify_commitment intent (natural-language editing of existing commitments)
+# ---------------------------------------------------------------------------
+
+
+def test_modify_commitment_updates_due_at_and_regenerates_reminder_phrase(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """The core case: reschedule via chat, reminder_phrase regenerated in
+    the same call so it doesn't go stale relative to the new time."""
+    c = service.create(
+        UID, CommitmentCreate(text="Finish the deck", due_at=datetime(2026, 5, 12, 15, 0, tzinfo=UTC))
+    )
+    fake = _llm_response(
+        "modify_commitment",
+        target_commitment_id=str(c.id),
+        due_at="2026-05-13T17:00:00",
+        reminder_phrase="You said you'd finish the deck by 5pm tomorrow — done?",
+        reply="Moved to tomorrow at 5pm.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(
+            UID, ChatRequest(message="push the deck to tomorrow at 5pm", timezone="America/Toronto")
+        )
+
+    assert result.intent == "modify_commitment"
+    assert result.commitment.id == c.id
+    assert result.commitment.due_at.astimezone(UTC).hour == 21  # 17:00 EDT == 21:00 UTC
+    assert result.commitment.reminder_phrase == "You said you'd finish the deck by 5pm tomorrow — done?"
+    # Untouched fields stay untouched.
+    assert result.commitment.text == "Finish the deck"
+
+
+def test_modify_commitment_only_touches_fields_the_llm_returned(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """Changing recurrence alone must not clobber text/due_at."""
+    due = datetime(2026, 5, 12, 9, 0, tzinfo=UTC)
+    c = service.create(UID, CommitmentCreate(text="Hit the gym", due_at=due, recurrence=Recurrence.WEEKLY))
+    fake = _llm_response(
+        "modify_commitment",
+        target_commitment_id=str(c.id),
+        recurrence="daily",
+        reply="Switched to every day.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="make the gym thing every day"))
+
+    assert result.commitment.recurrence == Recurrence.DAILY
+    assert result.commitment.text == "Hit the gym"
+    assert result.commitment.due_at == due
+
+
+def test_modify_commitment_unknown_target_id_is_a_noop(chat_service: ChatService) -> None:
+    """A hallucinated/stale id shouldn't crash the turn -- just no-op."""
+    fake = _llm_response(
+        "modify_commitment",
+        target_commitment_id=str(uuid4()),
+        due_at="2026-05-13T17:00:00",
+        reply="Moved it.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="push it to tomorrow"))
+
+    assert result.commitment is None
+
+
+def test_modify_commitment_missing_target_id_is_a_noop(chat_service: ChatService) -> None:
+    """No target_commitment_id at all (LLM forgot to set it) -- no-op, not a crash."""
+    fake = _llm_response(
+        "modify_commitment",
+        target_commitment_id=None,
+        due_at="2026-05-13T17:00:00",
+        reply="Moved it.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="push it to tomorrow"))
+
+    assert result.commitment is None
+
+
+def test_modify_commitment_cannot_target_another_users_commitment(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """Scoped by user_id via CommitmentService.get() -- an id belonging to
+    a different user is treated as not found, not leaked/edited."""
+    other_user = uuid4()
+    c = service.create(other_user, CommitmentCreate(text="Someone else's task", due_at=None))
+    fake = _llm_response(
+        "modify_commitment",
+        target_commitment_id=str(c.id),
+        text="Hijacked",
+        reply="Updated.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="rename that"))
+
+    assert result.commitment is None
+    assert service.get(other_user, c.id).text == "Someone else's task"
+
+
+def test_modify_commitment_cannot_target_a_done_commitment(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """A done commitment is a closed chapter -- modify_commitment only
+    applies to open ones."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.update(UID, c.id, CommitmentUpdate(status=CommitmentStatus.DONE))
+    fake = _llm_response(
+        "modify_commitment",
+        target_commitment_id=str(c.id),
+        due_at="2026-05-13T17:00:00",
+        reply="Moved it.",
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="push it to tomorrow"))
+
+    assert result.commitment is None
 
 
 def test_query_intent_prompt_includes_current_state(
@@ -529,19 +719,63 @@ def test_pending_check_reschedule_updates_due_at(
     assert service.list_pending_stale_checks(UID) == []
 
 
-def test_pending_check_reschedule_without_new_time_leaves_due_at_unchanged(
+def test_pending_check_reschedule_without_new_time_stays_pending(
     chat_service: ChatService, service: CommitmentService
 ) -> None:
     """If the classifier can't extract a new time, we never guess one —
-    due_at is left as-is (still acknowledged so it isn't re-intercepted)."""
+    due_at is left as-is. Regression coverage: this check-in must stay
+    pending (NOT acknowledged) so the user's actual next reply gets a real
+    chance to supply a time, instead of the check-in silently closing
+    forever with due_at never having moved (stale_check_sent_at is a
+    one-way door — acknowledging here would mean this commitment can never
+    be asked about again)."""
     c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
     service.mark_stale_check_sent(UID, c.id)
 
-    fake = _stale_llm_response("reschedule", new_due_at=None, reply="No problem — when though?")
+    fake = _stale_llm_response(
+        "reschedule",
+        new_due_at=None,
+        reply="No problem — want to pick a new time, or should I just call it done for now?",
+    )
     with patch(LLM_PATCH, return_value=fake):
-        chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
+        result = chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
 
     assert service.get(UID, c.id).due_at is None
+    assert result.reply == "No problem — want to pick a new time, or should I just call it done for now?"
+    # Still pending — deferred, not resolved.
+    pending_ids = [p.id for p in service.list_pending_stale_checks(UID)]
+    assert c.id in pending_ids
+
+
+def test_pending_check_reschedule_resolves_on_a_later_reply_with_a_time(
+    chat_service: ChatService, service: CommitmentService
+) -> None:
+    """Follow-up to the above: once the reschedule-without-a-time case
+    left the check-in pending, the user's NEXT message gets intercepted
+    again — and if that one has a concrete time, it resolves normally
+    (due_at moves, check-in finally acknowledged)."""
+    c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
+    service.mark_stale_check_sent(UID, c.id)
+
+    first = _stale_llm_response(
+        "reschedule", new_due_at=None, reply="Want to pick a new time, or call it done?"
+    )
+    with patch(LLM_PATCH, return_value=first):
+        chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
+    assert service.list_pending_stale_checks(UID) != []  # still pending after first reply
+
+    second = _stale_llm_response(
+        "reschedule", new_due_at="2026-07-10T17:00:00", reply="Moved to tomorrow at 5pm."
+    )
+    with patch(LLM_PATCH, return_value=second):
+        result = chat_service.handle(
+            UID, ChatRequest(message="let's say tomorrow at 5pm", timezone="America/Toronto")
+        )
+
+    assert result.reply == "Moved to tomorrow at 5pm."
+    updated = service.get(UID, c.id)
+    assert updated.due_at is not None
+    assert updated.due_at.astimezone(UTC).hour == 21  # 17:00 EDT == 21:00 UTC
     assert service.list_pending_stale_checks(UID) == []
 
 

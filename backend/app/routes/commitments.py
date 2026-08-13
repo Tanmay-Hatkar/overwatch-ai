@@ -62,7 +62,7 @@ def parse_commitment(
     """
     parser = CommitmentParserService(service)
     try:
-        return parser.parse_and_create(user.id, payload.message)
+        return parser.parse_and_create(user.id, payload.message, payload.timezone)
     except CommitmentParseError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

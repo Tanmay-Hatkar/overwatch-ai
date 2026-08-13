@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Home-screen widget (ADR-0020). Merged into the consuming app's
+         manifest by the standard AGP library manifest merger. exported="true"
+         is required here (not the usual false): the launcher/home-screen
+         process, not this app, is what invokes this receiver. -->
+    <application>
+        <receiver
+            android:name="expo.modules.widget.CommitmentWidgetReceiver"
+            android:exported="true"
+            android:label="@string/commitment_widget_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/commitment_widget_info" />
+        </receiver>
+    </application>
+</manifest>

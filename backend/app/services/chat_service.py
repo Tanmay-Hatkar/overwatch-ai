@@ -131,6 +131,8 @@ class ChatService:
             # Return the first created record for the UI's toast; the client
             # refreshes its list afterward, so all created items appear.
             commitment = created[0] if created else None
+        elif result.intent == "modify_commitment":
+            commitment = self._modify_commitment(user_id, result, user_tz)
 
         # Persist this exchange so it's part of future context.
         if self._conversation is not None:
@@ -141,6 +143,8 @@ class ChatService:
             reply=result.reply,
             intent=result.intent,
             commitment=commitment,
+            clarify_kind=result.clarify_kind if result.intent == "clarify" else None,
+            clarify_options=result.clarify_options if result.intent == "clarify" else None,
         )
 
     # ------------------------------------------------------------------
@@ -181,6 +185,11 @@ class ChatService:
 
         open_list = self._format_commitment_list(today_open, user_tz) if today_open else "  (none)"
         overdue_list = self._format_commitment_list(overdue, user_tz) if overdue else "  (none)"
+        # ALL open commitments (not just today/overdue) with their ids, so
+        # modify_commitment can reference any of them, not just what's due soon.
+        editable_list = (
+            self._format_editable_list(open_items, user_tz) if open_items else "  (none)"
+        )
 
         # Today's calendar events
         events_list = "  (none)"
@@ -214,6 +223,7 @@ class ChatService:
             open_list=open_list,
             overdue_count=len(overdue),
             overdue_list=overdue_list,
+            editable_list=editable_list,
             events_count=events_count,
             events_list=events_list,
             conversation=conversation,
@@ -229,6 +239,22 @@ class ChatService:
                 lines.append(f"  - {c.text} (due {time_str})")
             else:
                 lines.append(f"  - {c.text}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_editable_list(commitments: list[CommitmentResponse], user_tz: ZoneInfo) -> str:
+        """Every open commitment with its id, for modify_commitment to target.
+        Unlike _format_commitment_list (today/overdue only), this covers ALL
+        open commitments — an edit isn't limited to what's due soon."""
+        lines = []
+        for c in commitments:
+            if c.due_at:
+                dt_str = c.due_at.astimezone(user_tz).strftime("%Y-%m-%dT%H:%M:%S")
+                rec = f", recurrence={c.recurrence.value}" if c.recurrence.value != "none" else ""
+                lines.append(f'  - id={c.id} "{c.text}" due {dt_str}{rec}')
+            else:
+                rec = f", recurrence={c.recurrence.value}" if c.recurrence.value != "none" else ""
+                lines.append(f'  - id={c.id} "{c.text}" (no due date){rec}')
         return "\n".join(lines)
 
     @staticmethod
@@ -316,8 +342,13 @@ class ChatService:
             return None
 
         for c in pending:
-            self._apply_stale_check_outcome(user_id, c, result, user_tz)
-            self._service.acknowledge_stale_check(user_id, c.id)
+            resolved = self._apply_stale_check_outcome(user_id, c, result, user_tz)
+            if resolved:
+                self._service.acknowledge_stale_check(user_id, c.id)
+            # else: a reschedule with no extractable time is left pending
+            # (not acknowledged) so the user's actual next reply gets a
+            # real chance to give one, instead of the check-in silently
+            # closing with due_at never having moved.
 
         if self._conversation is not None:
             self._conversation.append(user_id, "user", request.message)
@@ -331,24 +362,37 @@ class ChatService:
         commitment: CommitmentResponse,
         result: _StaleCheckReplyResult,
         user_tz: ZoneInfo,
-    ) -> None:
+    ) -> bool:
         """
         Apply a classified stale-check outcome to one pending commitment.
 
-        still_valid / unrelated: no state change beyond acknowledgement
-        (handled by the caller). abandon: mark abandoned — a choice the
-        user made, never framed as a failure. reschedule: move due_at if
-        the LLM extracted a new time; leave it unchanged otherwise (never
-        guess at a time the user didn't give).
+        still_valid: no state change. abandon: mark abandoned — a choice
+        the user made, never framed as a failure. reschedule: move due_at
+        if the LLM extracted a new time; never guess at a time the user
+        didn't give.
+
+        Returns:
+            True if this outcome is resolved and the check-in should be
+            acknowledged (still_valid, abandon, or reschedule-with-a-time).
+            False for a reschedule with no extractable time — that's not
+            resolved, just deferred: the caller must NOT acknowledge, so
+            the user's next reply gets a real chance to supply one instead
+            of the check-in silently closing with due_at never having
+            moved (the prompt's reply text asks for the time explicitly
+            in this case — see stale_check_reply.py).
         """
         if result.outcome == "abandon":
             self._service.update(
                 user_id, commitment.id, CommitmentUpdate(status=CommitmentStatus.ABANDONED)
             )
+            return True
         elif result.outcome == "reschedule":
             new_due = self._parse_due_at(result.new_due_at, user_tz)
             if new_due is not None:
                 self._service.update(user_id, commitment.id, CommitmentUpdate(due_at=new_due))
+                return True
+            return False
+        return True  # still_valid
 
     @staticmethod
     def _build_stale_check_prompt(
@@ -394,10 +438,10 @@ class ChatService:
 
         Returns the created records (may be empty if nothing was usable).
         """
-        # Normalize to a list of (text, due_str, recurrence, lead) drafts.
+        # Normalize to a list of (text, due_str, recurrence, lead, phrase) drafts.
         if result.items:
             drafts = [
-                (d.text, d.due_at, d.recurrence, d.reminder_lead_minutes)
+                (d.text, d.due_at, d.recurrence, d.reminder_lead_minutes, d.reminder_phrase)
                 for d in result.items
             ]
         elif result.text:
@@ -407,6 +451,7 @@ class ChatService:
                     result.due_at,
                     result.recurrence,
                     result.reminder_lead_minutes,
+                    result.reminder_phrase,
                 )
             ]
         else:
@@ -414,21 +459,67 @@ class ChatService:
             return []
 
         created: list[CommitmentResponse] = []
-        for text_raw, due_raw, rec_raw, lead_raw in drafts:
+        for text_raw, due_raw, rec_raw, lead_raw, phrase_raw in drafts:
             text = (text_raw or "").strip()
             if not text:
                 continue
             due_at = self._parse_due_at(due_raw, user_tz)
             # A lead time only makes sense with a due time; clamp to 0..1440.
             lead = max(0, min(1440, int(lead_raw or 0))) if due_at is not None else 0
+            phrase = (phrase_raw or "").strip() or None
             payload = CommitmentCreate(
                 text=text,
                 due_at=due_at,
                 recurrence=self._parse_recurrence(rec_raw),
                 reminder_lead_minutes=lead,
+                reminder_phrase=phrase,
             )
             created.append(self._service.create(user_id, payload))
         return created
+
+    def _modify_commitment(
+        self, user_id: UUID, result: _ChatIntentResult, user_tz: ZoneInfo
+    ) -> CommitmentResponse | None:
+        """
+        For modify_commitment intents, apply only the field(s) the LLM
+        actually returned to the target commitment. target_commitment_id
+        must reference an open commitment the user owns — anything else
+        (missing id, wrong user, id for a done/abandoned commitment) is
+        treated as a no-op rather than raising, since a hallucinated or
+        stale id shouldn't crash the turn.
+        """
+        if not result.target_commitment_id:
+            logger.warning("modify_commitment intent had no target_commitment_id; skipping")
+            return None
+
+        try:
+            target_id = UUID(result.target_commitment_id)
+        except ValueError:
+            logger.warning(f"modify_commitment returned a non-UUID id: {result.target_commitment_id!r}")
+            return None
+
+        existing = self._service.get(user_id, target_id)
+        if existing is None or existing.status != CommitmentStatus.OPEN:
+            logger.warning(f"modify_commitment target not found or not open: {target_id}")
+            return None
+
+        changes: dict = {}
+        if result.text:
+            changes["text"] = result.text.strip()
+        if result.due_at:
+            changes["due_at"] = self._parse_due_at(result.due_at, user_tz)
+        if result.recurrence:
+            changes["recurrence"] = self._parse_recurrence(result.recurrence)
+        if result.reminder_lead_minutes is not None and (result.due_at or existing.due_at):
+            changes["reminder_lead_minutes"] = max(0, min(1440, int(result.reminder_lead_minutes)))
+        if result.reminder_phrase:
+            changes["reminder_phrase"] = result.reminder_phrase.strip()
+
+        if not changes:
+            logger.warning(f"modify_commitment for {target_id} had no fields to change; skipping")
+            return existing
+
+        return self._service.update(user_id, target_id, CommitmentUpdate(**changes))
 
     @staticmethod
     def _parse_recurrence(value: str | None) -> Recurrence:

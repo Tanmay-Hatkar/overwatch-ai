@@ -1,0 +1,33 @@
+// Jetpack Glance (the widget's UI) is Compose-based. Since this project is
+// on Kotlin 2.1.20, the Compose compiler is a separate Kotlin Gradle plugin
+// (not bundled into kotlin-android's own classpath entry the way the old
+// composeOptions.kotlinCompilerExtensionVersion mechanism implied) -- it
+// needs its own explicit version, resolved off Gradle Plugin Portal like
+// any other versioned plugin block.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+  id 'org.jetbrains.kotlin.plugin.compose' version '2.1.20'
+}
+
+group = 'expo.modules.widget'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.widget"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  buildFeatures {
+    compose true
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  implementation "androidx.glance:glance-appwidget:1.1.1"
+  implementation "androidx.work:work-runtime-ktx:2.9.1"
+}

@@ -131,10 +131,14 @@ export function staleCheckFireAt(c) {
  * Shared Snooze/Done handler. SNOOZE reschedules the same reminder
  * ~10 min later; DONE marks the commitment done via the API (best-effort).
  *
+ * Exported so ringAlarm.js's Tier-2 Snooze/Done taps can share this same
+ * handler rather than duplicating the SNOOZE-reschedule / DONE-API-call
+ * logic for a second tier.
+ *
  * @param {'SNOOZE'|'DONE'} actionId
  * @param {{id?: string, commitmentId?: string, text?: string, reminderPhrase?: string|null}} extra
  */
-async function applyReminderAction(actionId, extra) {
+export async function applyReminderAction(actionId, extra) {
   const id = extra.id ?? (extra.commitmentId ? notifId(extra.commitmentId) : undefined)
 
   if (actionId === 'SNOOZE') {

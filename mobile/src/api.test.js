@@ -17,6 +17,18 @@ jest.mock('expo-constants', () => ({
   default: { expoConfig: { extra: { apiBaseUrl: 'https://api.test' } } },
 }))
 
+// auth.js mirrors token writes into the home-screen widget's native config
+// store (ADR-0020) -- mocked here since api.js -> auth.js -> widget.js pulls
+// in the real native module, which throws in the jest-expo test environment.
+jest.mock('../modules/widget', () => ({
+  __esModule: true,
+  default: {
+    configure: jest.fn(() => Promise.resolve()),
+    clear: jest.fn(() => Promise.resolve()),
+    refreshNow: jest.fn(() => Promise.resolve()),
+  },
+}))
+
 import {
   sendChatMessage,
   getChatHistory,

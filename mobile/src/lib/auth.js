@@ -9,6 +9,7 @@
  */
 
 import * as SecureStore from 'expo-secure-store'
+import { configureWidget, clearWidget } from './widget'
 
 const TOKEN_KEY = 'ow.session.token'
 
@@ -21,16 +22,22 @@ export async function getStoredToken() {
   }
 }
 
-/** Persist the bearer token in secure storage. */
+/**
+ * Persist the bearer token in secure storage. Also mirrors it into the
+ * home-screen widget's own native config store (ADR-0020) -- best-effort,
+ * never blocks sign-in on a widget-config failure.
+ */
 export async function setStoredToken(token) {
   await SecureStore.setItemAsync(TOKEN_KEY, token)
+  configureWidget(token)
 }
 
-/** Remove the stored bearer token (logout). */
+/** Remove the stored bearer token (logout). Also clears the widget's config. */
 export async function clearStoredToken() {
   try {
     await SecureStore.deleteItemAsync(TOKEN_KEY)
   } catch {
     // nothing to clear
   }
+  clearWidget()
 }

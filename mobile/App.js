@@ -11,6 +11,7 @@ import ChatScreen from './src/screens/ChatScreen'
 import BriefingScreen from './src/screens/BriefingScreen'
 import ReflectionScreen from './src/screens/ReflectionScreen'
 import { ensureNotificationPermission, initNotificationActions } from './src/lib/notifications'
+import { initRingActionListener } from './src/lib/ringAlarm'
 import { color } from './src/theme'
 
 const darkTheme = {
@@ -32,7 +33,11 @@ function Root() {
     initNotificationActions().then((unsub) => {
       unsubscribe = unsub
     })
-    return () => unsubscribe?.()
+    const unsubscribeRing = initRingActionListener()
+    return () => {
+      unsubscribe?.()
+      unsubscribeRing?.()
+    }
   }, [user])
 
   if (loading) {

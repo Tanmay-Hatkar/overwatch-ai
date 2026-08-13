@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["RingAlarmModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.ringalarm.RingAlarmModule"]
+  }
+}

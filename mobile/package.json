@@ -40,6 +40,9 @@
     "react-test-renderer": "19.2.3"
   },
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "setupFiles": [
+      "./jest.setup.js"
+    ]
   }
 }

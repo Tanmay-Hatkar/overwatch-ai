@@ -16,7 +16,15 @@ export default defineConfig([
     ],
     languageOptions: {
       ...react.configs.flat.recommended.languageOptions,
-      globals: { ...globals.node, __DEV__: 'readonly', fetch: 'readonly' },
+      globals: {
+        ...globals.node,
+        __DEV__: 'readonly',
+        fetch: 'readonly',
+        FormData: 'readonly',
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
+        global: 'readonly',
+      },
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
     settings: { react: { version: 'detect' } },
@@ -27,6 +35,12 @@ export default defineConfig([
       // Raw apostrophes in JSX text are common and safe; escaping them
       // (&apos;) only hurts readability for zero functional benefit.
       'react/no-unescaped-entities': 'off',
+    },
+  },
+  {
+    files: ['**/*.test.js', 'jest.setup.js'],
+    languageOptions: {
+      globals: { ...globals.jest },
     },
   },
 ])

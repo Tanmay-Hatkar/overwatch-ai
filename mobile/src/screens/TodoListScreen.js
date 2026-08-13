@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from 'react-native'
+import { useFocusEffect } from '@react-navigation/native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   createCommitment,
@@ -25,7 +26,7 @@ import AddEditTodoModal from '../components/AddEditTodoModal'
 import ConfirmModal from '../components/ConfirmModal'
 import { color, font, radius, spacing } from '../theme'
 
-export default function TodoListScreen() {
+export default function TodoListScreen({ navigation }) {
   const { user, logout } = useAuth()
   const insets = useSafeAreaInsets()
   const [commitments, setCommitments] = useState([])
@@ -49,9 +50,13 @@ export default function TodoListScreen() {
     }
   }, [])
 
-  useEffect(() => {
-    load()
-  }, [load])
+  // Refetch every time this screen regains focus, not just on mount --
+  // commitments created via ChatScreen need to show up on the way back.
+  useFocusEffect(
+    useCallback(() => {
+      load()
+    }, [load]),
+  )
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -155,13 +160,22 @@ export default function TodoListScreen() {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
         <Text style={styles.headerTitle}>Todos</Text>
-        <Pressable
-          style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
-          onPress={() => setSignOutVisible(true)}
-          hitSlop={8}
-        >
-          <Text style={styles.avatarText}>{initial}</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
+            onPress={() => navigation.navigate('Chat')}
+            hitSlop={8}
+          >
+            <Text style={styles.chatButtonText}>💬 Chat</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
+            onPress={() => setSignOutVisible(true)}
+            hitSlop={8}
+          >
+            <Text style={styles.avatarText}>{initial}</Text>
+          </Pressable>
+        </View>
       </View>
 
       {knownSections.length > 0 && (
@@ -279,6 +293,16 @@ const styles = StyleSheet.create({
     borderBottomColor: color.border,
   },
   headerTitle: { color: color.textPrimary, fontSize: font.xxl, fontWeight: '700', letterSpacing: -0.3 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  chatButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm - 1,
+    borderRadius: radius.pill,
+    backgroundColor: color.surfaceRaised,
+    borderWidth: 1,
+    borderColor: color.border,
+  },
+  chatButtonText: { color: color.textPrimary, fontSize: font.sm + 1, fontWeight: '600' },
   avatar: {
     width: 34,
     height: 34,

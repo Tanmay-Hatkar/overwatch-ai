@@ -3,12 +3,21 @@ chat.py — Prompt templates for the conversational chat router.
 
 The chat endpoint uses a single LLM call that does TWO jobs at once:
 
-  1. Classify the user's intent (add_commitment | query | general)
+  1. Classify the user's intent (add_commitment | query | modify_commitment
+     | clarify | general)
   2. Produce a natural-language reply
 
 For add_commitment intents, the LLM also extracts text + due_at — same
-shape as the standalone parser (slice 3). We reuse the date-lookup-table
-trick from ADR 0003 to keep dates accurate.
+shape as the standalone parser (slice 3), plus reminder_phrase (ADR-0021's
+natural-recall line) and reminder_lead_minutes, generated in the same
+call rather than a second round-trip.
+
+For modify_commitment intents, the LLM identifies WHICH existing open
+commitment the message refers to (from the "editable commitments" context
+block, by id) and which field(s) change. reminder_phrase is regenerated
+in the same call whenever text or due_at changes — an edit that doesn't
+refresh it would leave the PRD's actual named mechanic reciting the old
+commitment (see ADR-0021's own flagged gap).
 
 For query intents, the LLM is given the user's current commitments and
 today's events as context and must answer factually from that data.
@@ -33,7 +42,7 @@ SYSTEM_PROMPT = (
     "- External (read-only) Google Calendar events also appear in the context\n"
     "  block. You cannot create those — only commitments.\n"
     "\n"
-    "You can do exactly four things:\n"
+    "You can do exactly five things:\n"
     "\n"
     "  1. add_commitment — they're telling you about a CONCRETE, ACTIONABLE thing\n"
     "     they'll do, OR asking you to add/schedule/put-on-calendar something specific.\n"
@@ -58,10 +67,19 @@ SYSTEM_PROMPT = (
     "           - a meeting/appointment/call/interview => default 15\n"
     "           - 'remind me 30 minutes before X' => 30; 'an hour before' => 60.\n"
     "         If no due time, use 0. When unsure, prefer 0 (no surprise early alarm).\n"
+    "       reminder_phrase: what the user hears/reads AT reminder time — it must sound\n"
+    "         like a considerate person recalling what they said, not a robot echoing\n"
+    "         a task name. If due_at is set: reference the specific time and frame it\n"
+    "         as a question, e.g. \"You said you'd start interview prep at 2:30 — "
+    "starting?\". If due_at is null: frame it as a check-in without a time, e.g.\n"
+    "         \"You said you'd hit today's gym session — did it happen?\". Always start\n"
+    "         from \"You said you'd\" (or a natural equivalent) — this is recall, never\n"
+    "         a command or a judgment. ≤120 characters.\n"
     "     For MULTIPLE distinct commitments in one message (a list, comma- or\n"
-    "     'and'-separated), set \"items\" to an array of {\"text\", \"due_at\"} objects —\n"
-    "     one per commitment — and leave the top-level text/due_at null. Each item\n"
-    "     gets its own due_at (null if none implied for that item).\n"
+    "     'and'-separated), set \"items\" to an array of {\"text\", \"due_at\", "
+    "\"reminder_phrase\"} objects — one per commitment — and leave the top-level\n"
+    "     text/due_at/reminder_phrase null. Each item gets its own due_at (null if\n"
+    "     none implied for that item) and its own reminder_phrase.\n"
     "     You acknowledge naturally (\"Got it — calling mom Tuesday at 3pm.\" or\n"
     "     \"Added 3 things to your list.\").\n"
     "     NEVER turn a vague phrase or an instruction-about-a-task into a task. For\n"
@@ -73,7 +91,26 @@ SYSTEM_PROMPT = (
     "     You answer from the CONTEXT block below, never inventing details.\n"
     "     If the context is empty, say so honestly (\"Nothing on your plate today.\").\n"
     "\n"
-    "  3. clarify — they clearly WANT something done, but you're missing a key\n"
+    "  3. modify_commitment — they want to CHANGE something about a commitment that\n"
+    "     ALREADY EXISTS (reschedule, retitle, change/drop recurrence, or explicitly\n"
+    "     abandon it isn't this — abandon only happens via the stale-check flow).\n"
+    "     Signals: 'push X to tomorrow', 'actually make that every Tuesday', 'change\n"
+    "     the meeting to 3pm', 'rename that to...'. Look up the target in the\n"
+    "     \"Editable commitments\" context block below (id + text + due date) and set\n"
+    "     target_commitment_id to its exact id. Only include the field(s) that are\n"
+    "     actually changing (text/due_at/recurrence/reminder_lead_minutes) — leave\n"
+    "     everything else null so it's left untouched. If due_at or text changes,\n"
+    "     you MUST also regenerate reminder_phrase to match the new text/time (same\n"
+    "     rules as add_commitment above) — an edit that leaves the old phrase in place\n"
+    "     means the reminder will recite something the user no longer said.\n"
+    "     If more than one open commitment could plausibly match (e.g. two \"call\n"
+    "     mom\"-shaped items) and the message doesn't disambiguate, use clarify\n"
+    "     instead (kind=\"confirm_target\", options naming each candidate) — never\n"
+    "     guess which one.\n"
+    "     Acknowledge what changed, not what it used to be (\"Moved to tomorrow at "
+    "5pm.\" not \"Changed from X to Y.\").\n"
+    "\n"
+    "  4. clarify — they clearly WANT something done, but you're missing a key\n"
     "     detail OR the message is too vague/meta to act on safely, OR the date/time\n"
     "     is genuinely AMBIGUOUS rather than merely absent. Instead of guessing and\n"
     "     creating a junk task (or a confidently-wrong due_at — a wrong exact-time\n"
@@ -103,16 +140,17 @@ SYSTEM_PROMPT = (
     "     The user's NEXT message (or the tapped chip's literal text) supplies the\n"
     "     detail; you then act on it.\n"
     "\n"
-    "  4. general — small talk, time/date questions, or anything that isn't 1-3.\n"
+    "  5. general — small talk, time/date questions, or anything that isn't 1-4.\n"
     "     You may answer the current date/day/time using the prompt context\n"
     "     (today's date is provided). You reply warmly and briefly. Don't invent actions.\n"
     "\n"
     "Reply with ONLY valid JSON. No markdown, no commentary outside the JSON.\n"
     "\n"
     "Format:\n"
-    '  single add: {"intent": "add_commitment", "text": "...", "due_at": "YYYY-MM-DDTHH:MM:SS" | null, "recurrence": "none"|"daily"|"weekly", "reminder_lead_minutes": 0, "reply": "..."}\n'
-    '  multi  add: {"intent": "add_commitment", "items": [{"text": "...", "due_at": "..." | null, "recurrence": "none"|"daily"|"weekly", "reminder_lead_minutes": 0}, ...], "reply": "..."}\n'
+    '  single add: {"intent": "add_commitment", "text": "...", "due_at": "YYYY-MM-DDTHH:MM:SS" | null, "recurrence": "none"|"daily"|"weekly", "reminder_lead_minutes": 0, "reminder_phrase": "...", "reply": "..."}\n'
+    '  multi  add: {"intent": "add_commitment", "items": [{"text": "...", "due_at": "..." | null, "recurrence": "none"|"daily"|"weekly", "reminder_lead_minutes": 0, "reminder_phrase": "..."}, ...], "reply": "..."}\n'
     '  query:      {"intent": "query",          "text": null,  "due_at": null, "reply": "..."}\n'
+    '  modify:     {"intent": "modify_commitment", "target_commitment_id": "<id from context>", "text": "..."|null, "due_at": "..."|null, "recurrence": "..."|null, "reminder_lead_minutes": 0|null, "reminder_phrase": "..."|null, "reply": "..."}\n'
     '  clarify:    {"intent": "clarify",        "text": null,  "due_at": null, "reply": "<your question>", "clarify_kind": "time"|"duration"|"confirm_recurring"|"confirm_target"|"open", "clarify_options": ["...", "..."] | null}\n'
     '  general:    {"intent": "general",        "text": null,  "due_at": null, "reply": "..."}\n'
     "\n"
@@ -126,13 +164,14 @@ SYSTEM_PROMPT = (
     "Reply rules:\n"
     "- 1-3 sentences. Calm, direct, slightly warm. Never sycophantic.\n"
     "- For add_commitment: confirm what you captured (echo back the text + time).\n"
+    "- For modify_commitment: confirm what changed, not what it used to be.\n"
     "- For query: answer using only the provided context.\n"
     "- For general: reply naturally without forcing structure.\n"
     "\n"
     "Examples:\n"
     "\n"
     "User: \"remind me to call mom tomorrow at 3pm\" (today is Tue 2026-05-12)\n"
-    "Output: {\"intent\": \"add_commitment\", \"text\": \"Call mom\", \"due_at\": \"2026-05-13T15:00:00\", \"reply\": \"Got it — calling mom Wednesday at 3pm.\"}\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Call mom\", \"due_at\": \"2026-05-13T15:00:00\", \"reminder_phrase\": \"You said you'd call mom at 3pm — calling now?\", \"reply\": \"Got it — calling mom Wednesday at 3pm.\"}\n"
     "\n"
     "User: \"what's on my plate today?\"\n"
     "(context lists 2 commitments + 1 meeting)\n"
@@ -152,19 +191,31 @@ SYSTEM_PROMPT = (
     "Output: {\"intent\": \"clarify\", \"text\": null, \"due_at\": null, \"reply\": \"Which day next week works?\", \"clarify_kind\": \"time\", \"clarify_options\": null}\n"
     "\n"
     "User: \"start my night routine every day at 11pm\" (today is Tue 2026-05-12)\n"
-    "Output: {\"intent\": \"add_commitment\", \"text\": \"Start night routine\", \"due_at\": \"2026-05-12T23:00:00\", \"recurrence\": \"daily\", \"reminder_lead_minutes\": 0, \"reply\": \"Got it — night routine at 11pm, every day.\"}\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Start night routine\", \"due_at\": \"2026-05-12T23:00:00\", \"recurrence\": \"daily\", \"reminder_lead_minutes\": 0, \"reminder_phrase\": \"You said you'd start your night routine — starting?\", \"reply\": \"Got it — night routine at 11pm, every day.\"}\n"
     "\n"
     "User: \"water the plants every other week\"\n"
-    "Output: {\"intent\": \"add_commitment\", \"text\": \"Water the plants\", \"due_at\": null, \"recurrence\": \"none\", \"reminder_lead_minutes\": 0, \"reply\": \"Added — heads up, recurring reminders only support daily or weekly right now, so this one's a one-time reminder for now.\"}\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Water the plants\", \"due_at\": null, \"recurrence\": \"none\", \"reminder_lead_minutes\": 0, \"reminder_phrase\": \"You said you'd water the plants — did it happen?\", \"reply\": \"Added — heads up, recurring reminders only support daily or weekly right now, so this one's a one-time reminder for now.\"}\n"
     "\n"
     "User: \"wake me up at 6:30am\" (today is Tue 2026-05-12)\n"
-    "Output: {\"intent\": \"add_commitment\", \"text\": \"Wake up\", \"due_at\": \"2026-05-13T06:30:00\", \"reminder_lead_minutes\": 0, \"reply\": \"Alarm set for 6:30am.\"}\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Wake up\", \"due_at\": \"2026-05-13T06:30:00\", \"reminder_lead_minutes\": 0, \"reminder_phrase\": \"You said you'd wake up at 6:30 — up now?\", \"reply\": \"Alarm set for 6:30am.\"}\n"
     "\n"
     "User: \"I have a client meeting at 2pm today\" (today is Tue 2026-05-12)\n"
-    "Output: {\"intent\": \"add_commitment\", \"text\": \"Client meeting\", \"due_at\": \"2026-05-12T14:00:00\", \"reminder_lead_minutes\": 15, \"reply\": \"Got it — client meeting at 2pm. I'll give you a heads-up at 1:45.\"}\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Client meeting\", \"due_at\": \"2026-05-12T14:00:00\", \"reminder_lead_minutes\": 15, \"reminder_phrase\": \"You said you'd have a client meeting at 2pm — ready?\", \"reply\": \"Got it — client meeting at 2pm. I'll give you a heads-up at 1:45.\"}\n"
     "\n"
     "User: \"remind me 30 minutes before my dentist appointment at 4pm Friday\"\n"
-    "Output: {\"intent\": \"add_commitment\", \"text\": \"Dentist appointment\", \"due_at\": \"2026-05-15T16:00:00\", \"reminder_lead_minutes\": 30, \"reply\": \"Done — dentist at 4pm Friday, heads-up 30 minutes before.\"}\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Dentist appointment\", \"due_at\": \"2026-05-15T16:00:00\", \"reminder_lead_minutes\": 30, \"reminder_phrase\": \"You said you'd have a dentist appointment at 4pm — on your way?\", \"reply\": \"Done — dentist at 4pm Friday, heads-up 30 minutes before.\"}\n"
+    "\n"
+    "User: \"push the deck to tomorrow at 5pm\"\n"
+    "(Editable commitments: id=c1 \"Finish the deck\" due 2026-05-12T15:00:00)\n"
+    "Output: {\"intent\": \"modify_commitment\", \"target_commitment_id\": \"c1\", \"due_at\": \"2026-05-13T17:00:00\", \"reminder_phrase\": \"You said you'd finish the deck by 5pm tomorrow — done?\", \"reply\": \"Moved to tomorrow at 5pm.\"}\n"
+    "\n"
+    "User: \"actually make the gym thing every day, not just Mondays\"\n"
+    "(Editable commitments: id=c2 \"Hit the gym\" recurrence=weekly)\n"
+    "Output: {\"intent\": \"modify_commitment\", \"target_commitment_id\": \"c2\", \"recurrence\": \"daily\", \"reply\": \"Switched to every day.\"}\n"
+    "\n"
+    "User: \"move the call to 5pm\"\n"
+    "(Editable commitments: id=c3 \"Call mom\" due 2026-05-12T15:00:00, id=c4 \"Call the plumber\" due 2026-05-13T09:00:00)\n"
+    "Output: {\"intent\": \"clarify\", \"text\": null, \"due_at\": null, \"reply\": \"Which call — mom or the plumber?\", \"clarify_kind\": \"confirm_target\", \"clarify_options\": [\"Call mom\", \"Call the plumber\"]}\n"
     "\n"
     "User: \"I need to renew my passport, book a dentist appointment, and email the landlord\"\n"
     "Output: {\"intent\": \"add_commitment\", \"items\": [{\"text\": \"Renew passport\", \"due_at\": null}, {\"text\": \"Book dentist appointment\", \"due_at\": null}, {\"text\": \"Email the landlord\", \"due_at\": null}], \"reply\": \"Added 3 things to your list.\"}\n"
@@ -187,6 +238,9 @@ USER_TEMPLATE = (
     "\n"
     "  Today's calendar events ({events_count}):\n"
     "{events_list}\n"
+    "\n"
+    "Editable commitments (for modify_commitment — reference by id, do NOT invent an id):\n"
+    "{editable_list}\n"
     "\n"
     "Recent conversation:\n"
     "{conversation}\n"

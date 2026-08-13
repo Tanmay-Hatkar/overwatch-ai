@@ -86,6 +86,7 @@ export default function ChatScreen({ navigation }) {
         clarifyKind: result.intent === 'clarify' ? result.clarify_kind : undefined,
         clarifyOptions: result.intent === 'clarify' ? result.clarify_options : undefined,
         commitmentCreated: result.intent === 'add_commitment' && result.commitment ? result.commitment.text : undefined,
+        commitmentUpdated: result.intent === 'modify_commitment' && result.commitment ? result.commitment.text : undefined,
       }
       setHistory((prev) => [...prev, assistantTurn].slice(-MAX_HISTORY_TURNS))
     } catch (err) {
@@ -211,6 +212,9 @@ function ChatBubble({ turn, isLatest, onChipTap, disabled }) {
       </View>
       {turn.commitmentCreated && (
         <Text style={styles.createdTag}>✓ Added: {turn.commitmentCreated}</Text>
+      )}
+      {turn.commitmentUpdated && (
+        <Text style={styles.createdTag}>✏️ Updated: {turn.commitmentUpdated}</Text>
       )}
       {showChips && (
         <View style={styles.chipRow}>

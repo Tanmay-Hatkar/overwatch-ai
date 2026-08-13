@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { ActivityIndicator, StyleSheet, View } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native'
@@ -7,6 +8,7 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext'
 import LoginScreen from './src/screens/LoginScreen'
 import TodoListScreen from './src/screens/TodoListScreen'
 import ChatScreen from './src/screens/ChatScreen'
+import { ensureNotificationPermission, initNotificationActions } from './src/lib/notifications'
 import { color } from './src/theme'
 
 const darkTheme = {
@@ -18,6 +20,18 @@ const Stack = createNativeStackNavigator()
 
 function Root() {
   const { user, loading } = useAuth()
+
+  // Register the Snooze/Done response listener + ask for permission once
+  // signed in. Best-effort: notifications never block the rest of the app.
+  useEffect(() => {
+    if (!user) return
+    let unsubscribe
+    ensureNotificationPermission()
+    initNotificationActions().then((unsub) => {
+      unsubscribe = unsub
+    })
+    return () => unsubscribe?.()
+  }, [user])
 
   if (loading) {
     return (

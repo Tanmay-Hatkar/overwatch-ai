@@ -21,6 +21,7 @@ import {
 import { useAuth } from '../contexts/AuthContext'
 import { sectionizeCommitments } from '../lib/sections'
 import { colorForSection } from '../lib/sectionColor'
+import { syncCommitmentReminders } from '../lib/notifications'
 import TodoItem from '../components/TodoItem'
 import AddEditTodoModal from '../components/AddEditTodoModal'
 import ConfirmModal from '../components/ConfirmModal'
@@ -42,6 +43,9 @@ export default function TodoListScreen({ navigation }) {
     try {
       const data = await listCommitments()
       setCommitments(data)
+      // Reconcile the OS notification schedule with whatever's actually
+      // in the list now -- best-effort, never blocks the UI on failure.
+      syncCommitmentReminders(data)
     } catch (err) {
       Alert.alert('Could not load todos', err.message || 'Try again.')
     } finally {

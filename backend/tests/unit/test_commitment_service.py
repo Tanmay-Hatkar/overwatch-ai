@@ -46,6 +46,24 @@ def test_completing_a_daily_recurring_commitment_rolls_it_forward(
     assert updated.due_at.hour == due.hour                 # same time of day
 
 
+def test_completing_a_recurring_commitment_with_no_due_date_stays_open(
+    service: CommitmentService,
+) -> None:
+    """A recurring commitment with no due_at (e.g. "stretch every day", no
+    time) has no anchor to advance from — it must still roll back to OPEN
+    rather than being skipped and left permanently DONE."""
+    created = service.create(
+        UID, CommitmentCreate(text="Stretch", due_at=None, recurrence=Recurrence.DAILY)
+    )
+
+    updated = service.update(UID, created.id, CommitmentUpdate(status=CommitmentStatus.DONE))
+
+    assert updated is not None
+    assert updated.status == CommitmentStatus.OPEN
+    assert updated.recurrence == Recurrence.DAILY
+    assert updated.due_at is None
+
+
 def test_completing_a_non_recurring_commitment_closes_it(
     service: CommitmentService,
 ) -> None:

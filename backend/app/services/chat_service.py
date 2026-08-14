@@ -538,6 +538,14 @@ class ChatService:
         the USER'S timezone. We attach the user's timezone, then convert to UTC
         so reminders fire at the right absolute instant and every device renders
         it in its own local time. Invalid values are dropped (returns None).
+
+        A same-day relative phrase ("tonight", "in an hour") can resolve to an
+        instant that's already passed by the time it gets here — e.g. no
+        explicit rule for what "tonight" defaults to, or a plain LLM mistake.
+        Since this product's whole model is a reminder firing at a real future
+        moment, a past due_at is never useful and just leaves a commitment
+        permanently "overdue" from the instant it's created. Clamp forward to
+        "now" rather than silently accept it.
         """
         if not due_str:
             return None
@@ -545,7 +553,16 @@ class ChatService:
             parsed = datetime.fromisoformat(due_str)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=user_tz)
-            return parsed.astimezone(UTC)
+            resolved = parsed.astimezone(UTC)
         except (ValueError, TypeError):
             logger.warning(f"chat: invalid due_at dropped: {due_str!r}")
             return None
+
+        now = datetime.now(UTC)
+        if resolved < now:
+            logger.warning(
+                f"chat: due_at {due_str!r} resolved to the past ({resolved.isoformat()}); "
+                "clamping to now"
+            )
+            return now
+        return resolved

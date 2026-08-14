@@ -73,15 +73,19 @@ class CommitmentService:
 
         # Completing a RECURRING commitment doesn't close it — it rolls forward
         # to the next occurrence and stays open. So a daily routine reappears
-        # tomorrow instead of vanishing when you tick it off tonight.
+        # tomorrow instead of vanishing when you tick it off tonight. A
+        # recurring commitment with no due_at (a valid state — e.g. "stretch
+        # every day" with no time) has no anchor to advance from, so it just
+        # flips back to OPEN with due_at left at None, instead of being
+        # skipped entirely and left permanently DONE.
         if payload.status == CommitmentStatus.DONE:
             existing = self._repo.get(user_id, commitment_id)
-            if (
-                existing is not None
-                and existing.recurrence != Recurrence.NONE
-                and existing.due_at is not None
-            ):
-                next_due = self._next_occurrence(existing.due_at, existing.recurrence)
+            if existing is not None and existing.recurrence != Recurrence.NONE:
+                next_due = (
+                    self._next_occurrence(existing.due_at, existing.recurrence)
+                    if existing.due_at is not None
+                    else None
+                )
                 logger.info(
                     "Recurring commitment %s rolled forward to %s", commitment_id, next_due
                 )

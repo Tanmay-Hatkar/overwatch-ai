@@ -304,6 +304,27 @@ def test_clarify_passes_through_kind_and_options_for_chip_rendering(
     assert result.clarify_options == ["Yes, daily", "No, just once"]
 
 
+def test_clarify_duration_kind_passes_through_with_options(
+    chat_service: ChatService,
+) -> None:
+    """clarify_kind='duration' (a start time is known, length is not) uses
+    the same tap-chip mechanism as confirm_recurring/confirm_target -- no
+    dedicated client UI needed, it's driven entirely by clarify_options."""
+    fake = _llm_response(
+        "clarify",
+        reply="Got it, 2pm — how long should I block?",
+        clarify_kind="duration",
+        clarify_options=["30 min", "1 hour", "1.5 hours", "2 hours"],
+    )
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="team meeting at 2pm tomorrow"))
+
+    assert result.intent == "clarify"
+    assert result.commitment is None
+    assert result.clarify_kind == "duration"
+    assert result.clarify_options == ["30 min", "1 hour", "1.5 hours", "2 hours"]
+
+
 def test_clarify_kind_defaults_to_none_when_llm_omits_it(
     chat_service: ChatService,
 ) -> None:

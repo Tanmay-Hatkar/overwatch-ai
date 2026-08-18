@@ -84,21 +84,26 @@ class ChatResponse(BaseModel):
         default=None,
         description=(
             "Only set when intent='clarify'. Tells the client what kind of "
-            "follow-up UI to render. 'time'/'duration' with no clarify_options "
-            "means the client should offer a time/duration picker; "
-            "'confirm_recurring'/'confirm_target' pairs with clarify_options "
-            "for tap-only quick-reply chips; 'open' falls back to a normal "
-            "free-text reply bubble."
+            "follow-up UI to render. 'confirm_recurring'/'confirm_target'/"
+            "'duration' pair with clarify_options for tap-only quick-reply "
+            "chips (and 'time' may too, for a small fixed set of likely "
+            "candidates); 'open', or any of those without clarify_options, "
+            "falls back to a normal free-text reply bubble. There's no "
+            "dedicated native time/duration picker widget — free text (typed "
+            "or via a chip) is the only input path today."
         ),
     )
     clarify_options: list[str] | None = Field(
         default=None,
         max_length=4,
         description=(
-            "Only meaningful when clarify_kind is 'confirm_recurring' or "
-            "'confirm_target' (or 'time' with a small fixed set of likely "
+            "Tap-only quick-reply chips, whichever clarify_kind they're "
+            "attached to (typically 'confirm_recurring', 'confirm_target', or "
+            "'duration'; occasionally 'time' with a small fixed set of likely "
             "candidates, e.g. ['Today', 'Tomorrow']). Each option, tapped, is "
-            "sent verbatim as the next chat message — no new endpoint needed."
+            "sent verbatim as the next chat message — no new endpoint needed. "
+            "None/empty means no chips — the client falls back to a normal "
+            "free-text reply bubble regardless of clarify_kind."
         ),
     )
 

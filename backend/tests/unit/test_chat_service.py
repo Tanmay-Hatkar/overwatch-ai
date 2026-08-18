@@ -10,6 +10,7 @@ import json
 from uuid import uuid4
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -36,6 +37,15 @@ def _llm_response(intent: str, **fields) -> str:
     payload = {"intent": intent, "text": None, "due_at": None, "reply": "default reply"}
     payload.update(fields)
     return json.dumps(payload)
+
+
+def _future_date(days: int = 2) -> str:
+    """A date guaranteed to be in the future relative to test-run time, as
+    YYYY-MM-DD. Used instead of a hardcoded calendar date so these tests
+    don't quietly break once "today" catches up to whatever date used to be
+    hardcoded here -- which is exactly what ChatService._parse_due_at's
+    past-due_at clamp is now designed to catch and rewrite."""
+    return (datetime.now(UTC) + timedelta(days=days)).date().isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +89,7 @@ def test_add_commitment_creates_record_and_returns_it(chat_service: ChatService)
     fake = _llm_response(
         "add_commitment",
         text="Call mom",
-        due_at="2026-06-04T15:00:00",
+        due_at=f"{_future_date()}T15:00:00",
         reply="Got it — calling mom Thursday at 3pm.",
     )
     with patch(LLM_PATCH, return_value=fake):
@@ -135,6 +145,29 @@ def test_add_commitment_skips_create_when_text_missing(chat_service: ChatService
     assert result.intent == "add_commitment"
     assert result.commitment is None  # nothing persisted
     assert result.reply  # but we still get a reply
+
+
+def test_add_commitment_clamps_a_past_due_at_to_now(chat_service: ChatService) -> None:
+    """A same-day relative phrase ("tonight") can resolve to an instant
+    that's already passed (e.g. no explicit default rule, or a plain LLM
+    slip) -- a freshly created commitment must never already be overdue at
+    creation time, so a past due_at is clamped forward to "now" rather than
+    accepted as-is."""
+    past = (datetime.now(UTC) - timedelta(hours=1)).replace(microsecond=0)
+    fake = _llm_response(
+        "add_commitment",
+        text="Water the plants",
+        due_at=past.isoformat().replace("+00:00", ""),
+        reply="Got it — watering the plants tonight.",
+    )
+    before = datetime.now(UTC)
+    with patch(LLM_PATCH, return_value=fake):
+        result = chat_service.handle(UID, ChatRequest(message="water the plants tonight"))
+    after = datetime.now(UTC)
+
+    assert result.commitment is not None
+    assert result.commitment.due_at is not None
+    assert before <= result.commitment.due_at <= after  # clamped to "now", not the past value
 
 
 def test_multi_add_creates_all_items(
@@ -202,13 +235,18 @@ def test_add_commitment_drops_invalid_due_at(chat_service: ChatService) -> None:
 
 def test_naive_due_at_interpreted_in_user_timezone(chat_service: ChatService) -> None:
     """
-    A naive due_at like '11:00' with a Toronto timezone (UTC-4 in June) is
-    stored as 15:00 UTC — so reminders fire at the right absolute instant.
+    A naive due_at like '11:00' with a Toronto timezone is stored as the
+    matching UTC instant -- so reminders fire at the right absolute time.
+
+    Uses _future_date() (today + a couple days) rather than a fixed
+    calendar date, so the EDT-vs-EST offset below matches whatever DST
+    regime "today" is actually in when the suite runs (rather than being
+    hardcoded to a date that will eventually land in the wrong one).
     """
     fake = _llm_response(
         "add_commitment",
         text="Vosyn meeting",
-        due_at="2026-06-08T11:00:00",
+        due_at=f"{_future_date()}T11:00:00",
         reply="Got it.",
     )
     with patch(LLM_PATCH, return_value=fake):
@@ -218,8 +256,10 @@ def test_naive_due_at_interpreted_in_user_timezone(chat_service: ChatService) ->
 
     assert result.commitment is not None
     assert result.commitment.due_at is not None
-    # 11:00 America/Toronto (EDT, UTC-4) == 15:00 UTC
-    assert result.commitment.due_at.astimezone(UTC).hour == 15
+    target_local = datetime.fromisoformat(f"{_future_date()}T11:00:00").replace(
+        tzinfo=ZoneInfo("America/Toronto")
+    )
+    assert result.commitment.due_at.astimezone(UTC).hour == target_local.astimezone(UTC).hour
 
 
 def test_missing_timezone_falls_back_to_utc(chat_service: ChatService) -> None:
@@ -227,7 +267,7 @@ def test_missing_timezone_falls_back_to_utc(chat_service: ChatService) -> None:
     fake = _llm_response(
         "add_commitment",
         text="Test",
-        due_at="2026-06-08T11:00:00",
+        due_at=f"{_future_date()}T11:00:00",
         reply="Added.",
     )
     with patch(LLM_PATCH, return_value=fake):
@@ -350,10 +390,11 @@ def test_modify_commitment_updates_due_at_and_regenerates_reminder_phrase(
     c = service.create(
         UID, CommitmentCreate(text="Finish the deck", due_at=datetime(2026, 5, 12, 15, 0, tzinfo=UTC))
     )
+    new_due_str = f"{_future_date()}T17:00:00"
     fake = _llm_response(
         "modify_commitment",
         target_commitment_id=str(c.id),
-        due_at="2026-05-13T17:00:00",
+        due_at=new_due_str,
         reminder_phrase="You said you'd finish the deck by 5pm tomorrow — done?",
         reply="Moved to tomorrow at 5pm.",
     )
@@ -362,9 +403,15 @@ def test_modify_commitment_updates_due_at_and_regenerates_reminder_phrase(
             UID, ChatRequest(message="push the deck to tomorrow at 5pm", timezone="America/Toronto")
         )
 
+    expected_utc_hour = (
+        datetime.fromisoformat(new_due_str)
+        .replace(tzinfo=ZoneInfo("America/Toronto"))
+        .astimezone(UTC)
+        .hour
+    )
     assert result.intent == "modify_commitment"
     assert result.commitment.id == c.id
-    assert result.commitment.due_at.astimezone(UTC).hour == 21  # 17:00 EDT == 21:00 UTC
+    assert result.commitment.due_at.astimezone(UTC).hour == expected_utc_hour
     assert result.commitment.reminder_phrase == "You said you'd finish the deck by 5pm tomorrow — done?"
     # Untouched fields stay untouched.
     assert result.commitment.text == "Finish the deck"
@@ -703,19 +750,25 @@ def test_pending_check_reschedule_updates_due_at(
     c = service.create(UID, CommitmentCreate(text="Finish the deck", due_at=None))
     service.mark_stale_check_sent(UID, c.id)
 
+    new_due_str = f"{_future_date()}T17:00:00"
     fake = _stale_llm_response(
-        "reschedule", new_due_at="2026-07-10T17:00:00", reply="Moved to tomorrow at 5pm."
+        "reschedule", new_due_at=new_due_str, reply="Moved to tomorrow at 5pm."
     )
     with patch(LLM_PATCH, return_value=fake):
         result = chat_service.handle(
             UID, ChatRequest(message="yeah but tomorrow at 5pm now", timezone="America/Toronto")
         )
 
+    expected_utc_hour = (
+        datetime.fromisoformat(new_due_str)
+        .replace(tzinfo=ZoneInfo("America/Toronto"))
+        .astimezone(UTC)
+        .hour
+    )
     assert result.reply == "Moved to tomorrow at 5pm."
     updated = service.get(UID, c.id)
     assert updated.due_at is not None
-    # 17:00 America/Toronto (EDT, UTC-4) == 21:00 UTC
-    assert updated.due_at.astimezone(UTC).hour == 21
+    assert updated.due_at.astimezone(UTC).hour == expected_utc_hour
     assert service.list_pending_stale_checks(UID) == []
 
 
@@ -764,18 +817,25 @@ def test_pending_check_reschedule_resolves_on_a_later_reply_with_a_time(
         chat_service.handle(UID, ChatRequest(message="gonna move it but not sure when"))
     assert service.list_pending_stale_checks(UID) != []  # still pending after first reply
 
+    new_due_str = f"{_future_date()}T17:00:00"
     second = _stale_llm_response(
-        "reschedule", new_due_at="2026-07-10T17:00:00", reply="Moved to tomorrow at 5pm."
+        "reschedule", new_due_at=new_due_str, reply="Moved to tomorrow at 5pm."
     )
     with patch(LLM_PATCH, return_value=second):
         result = chat_service.handle(
             UID, ChatRequest(message="let's say tomorrow at 5pm", timezone="America/Toronto")
         )
 
+    expected_utc_hour = (
+        datetime.fromisoformat(new_due_str)
+        .replace(tzinfo=ZoneInfo("America/Toronto"))
+        .astimezone(UTC)
+        .hour
+    )
     assert result.reply == "Moved to tomorrow at 5pm."
     updated = service.get(UID, c.id)
     assert updated.due_at is not None
-    assert updated.due_at.astimezone(UTC).hour == 21  # 17:00 EDT == 21:00 UTC
+    assert updated.due_at.astimezone(UTC).hour == expected_utc_hour
     assert service.list_pending_stale_checks(UID) == []
 
 

@@ -9,7 +9,7 @@ The LLM is mocked at the import site in briefing_service. Tests cover:
   - Prompt construction (commitment text appears in the user prompt)
 """
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 from unittest.mock import patch
 

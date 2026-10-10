@@ -1,6 +1,6 @@
 # =============================================================================
 # Python (backend) — anchor most patterns to repo root with `/`
-# so they don't accidentally match `src/lib/` etc. inside the frontend.
+# so they don't accidentally match `src/lib/` etc. inside mobile/.
 # =============================================================================
 __pycache__/
 *.py[cod]
@@ -48,7 +48,7 @@ coverage.xml
 .ruff_cache/
 
 # =============================================================================
-# Node / Frontend
+# Node / mobile
 # =============================================================================
 node_modules/
 dist/

@@ -1,16 +1,18 @@
 """
-auth.py — Authentication routes (Google OAuth + session management).
+auth.py — Authentication routes (Google OAuth + bearer-token sessions).
 
 Endpoints:
   GET  /auth/google/login      Redirect to Google's consent screen
-  GET  /auth/google/callback   Receive code from Google, mint session cookie
-  GET  /auth/me                Return the current user, refreshing the cookie
-                               if it's near expiry. 401 if not signed in.
-  POST /auth/logout            Clear the session cookie.
+  GET  /auth/google/callback   Receive code from Google, deep-link a session
+                               token into the mobile app (overwatch://auth)
+  GET  /auth/me                Return the current user. 401 if not signed in.
+  POST /auth/logout            No-op acknowledgement (sessions are stateless
+                               bearer JWTs; the app discards its own token).
 
-All four endpoints set/clear cookies directly on the response. The actual
-identity work is done by the JWT and Google OAuth services — these
-routes are HTTP glue.
+The mobile app is the only client (ADR-0024), so sessions are carried as
+`Authorization: Bearer <jwt>` — no session cookie. The only cookie left is
+the short-lived OAuth `state` cookie, which lives in the system browser
+for the duration of the sign-in flow (CSRF protection).
 
 The current_user FastAPI dependency lives at the bottom of this module
 and is imported by other routes for auth-gating.
@@ -20,20 +22,15 @@ import logging
 import sqlite3
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, status
-from fastapi.responses import RedirectResponse, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 
 from app.config import is_email_allowed, settings
 from app.database import get_db
 from app.models.user import UserResponse
 from app.repositories.user_repository import UserRepository
 from app.services import google_oauth_service
-from app.services.jwt_service import (
-    JWTError,
-    issue_session_token,
-    should_refresh,
-    verify_session_token,
-)
+from app.services.jwt_service import JWTError, issue_session_token, verify_session_token
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +41,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _STATE_COOKIE = "ow_oauth_state"
 _STATE_COOKIE_MAX_AGE_SECONDS = 600  # 10 minutes
 
-# Short-lived cookie marking an OAuth flow as originating from the native
-# (Capacitor) app, so the callback returns the session token via a deep
-# link instead of setting a cookie. Set in /login, read in /callback.
-_NATIVE_COOKIE = "ow_oauth_native"
-
-# Custom URL scheme the Android app registers (AndroidManifest.xml). The
-# callback deep-links here with the session token so the app can store it.
+# Custom URL scheme the mobile app registers (mobile/app.json `scheme`).
+# The callback deep-links here with the session token so the app can store it.
 _NATIVE_REDIRECT_SCHEME = "overwatch"
 
 
@@ -59,35 +51,62 @@ def _build_repo(conn: sqlite3.Connection = Depends(get_db)) -> UserRepository:
     return UserRepository(conn)
 
 
-def _token_from(session_cookie: str | None, authorization: str | None) -> str | None:
+def _bearer_token(authorization: str | None) -> str | None:
     """
-    Extract the session token from either source.
-
-    Web clients send it as the `ow_session` cookie. The native app sends it
-    as `Authorization: Bearer <token>` (no cookies in the native webview).
-    The Authorization header takes precedence when present.
+    Extract the session token from an `Authorization: Bearer <token>` header.
 
     Args:
-        session_cookie: Value of the ow_session cookie, if any.
         authorization: Value of the Authorization header, if any.
 
     Returns:
-        The bearer/cookie token string, or None if neither is present.
+        The token string, or None if the header is missing or not a bearer.
     """
     if authorization and authorization.lower().startswith("bearer "):
         return authorization[7:].strip() or None
-    return session_cookie
+    return None
+
+
+def _user_from_token(token: str | None, repo: UserRepository) -> UserResponse:
+    """
+    Resolve a bearer token to its user, or raise 401.
+
+    Args:
+        token: The session JWT, or None.
+        repo: UserRepository for the lookup.
+
+    Returns:
+        The matching UserResponse.
+
+    Raises:
+        401 if the token is missing, invalid/expired, or the user no longer exists.
+    """
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+    try:
+        user_id = verify_session_token(token)
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session invalid or expired",
+        ) from exc
+
+    user = repo.get_by_id(user_id)
+    if user is None:
+        # User row was deleted but their token is still floating around.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists",
+        )
+    return user
 
 
 @router.get("/google/login")
-def google_login(native: bool = False) -> RedirectResponse:
+def google_login() -> RedirectResponse:
     """
     Start the OAuth flow. Sets a short-lived state cookie and 302s to Google.
 
-    Args:
-        native: When true (the Capacitor app passes ?native=1), the flow is
-            marked so the callback returns the token via a deep link instead
-            of setting a session cookie.
+    The mobile app still sends `?native=1` (from when a web client shared
+    this endpoint); it is accepted and ignored — every flow is native now.
 
     Returns:
         302 redirect to Google's consent screen.
@@ -106,17 +125,6 @@ def google_login(native: bool = False) -> RedirectResponse:
 
     response = RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
     _set_state_cookie(response, state)
-    if native:
-        # Mark this flow as native so the callback deep-links the token back.
-        response.set_cookie(
-            key=_NATIVE_COOKIE,
-            value="1",
-            max_age=_STATE_COOKIE_MAX_AGE_SECONDS,
-            httponly=True,
-            secure=_secure_cookies(),
-            samesite="lax",
-            path="/",
-        )
     return response
 
 
@@ -129,8 +137,8 @@ def google_callback(
     repo: UserRepository = Depends(_build_repo),
 ) -> RedirectResponse:
     """
-    Receive Google's redirect, verify the state, exchange the code, set the
-    session cookie, and redirect to the frontend.
+    Receive Google's redirect, verify the state, exchange the code, and
+    deep-link the session token back into the mobile app.
 
     Args:
         code: Authorization code from Google.
@@ -138,35 +146,33 @@ def google_callback(
         error: If present, the user denied consent or Google reported an error.
 
     Returns:
-        302 redirect to the frontend (with the session cookie set on success,
-        or with a query string error parameter on failure).
+        302 redirect to overwatch://auth with ?token=<jwt> on success or
+        ?auth_error=<code> on failure.
     """
-    native = request.cookies.get(_NATIVE_COOKIE) == "1"
-
     if error:
         logger.info("Google OAuth callback returned error: %s", error)
-        return _finish_auth(error="google_denied", native=native)
+        return _finish_auth(error="google_denied")
 
     if not code or not state:
-        return _finish_auth(error="missing_code_or_state", native=native)
+        return _finish_auth(error="missing_code_or_state")
 
     expected_state = request.cookies.get(_STATE_COOKIE)
     if not expected_state or expected_state != state:
         logger.warning("OAuth state mismatch — possible CSRF or expired flow")
-        return _finish_auth(error="state_mismatch", native=native)
+        return _finish_auth(error="state_mismatch")
 
     try:
         google_user = google_oauth_service.exchange_code_for_user(code)
     except google_oauth_service.OAuthError:
         logger.exception("Failed to exchange Google OAuth code")
-        return _finish_auth(error="oauth_exchange_failed", native=native)
+        return _finish_auth(error="oauth_exchange_failed")
 
     # Email allowlist: if ALLOWED_GOOGLE_EMAILS is set, only those addresses
     # may sign in. Reject before touching the DB so unauthorized signups
     # never create a user row.
     if not is_email_allowed(google_user.email):
         logger.info("Sign-in rejected by allowlist: %s", google_user.email)
-        return _finish_auth(error="email_not_allowed", native=native)
+        return _finish_auth(error="email_not_allowed")
 
     # Find or create the user row. google_id is the immutable identifier.
     user = repo.get_by_google_id(google_user.sub)
@@ -186,25 +192,16 @@ def google_callback(
     repo.update_last_login(user.id)
 
     token = issue_session_token(user.id)
-    return _finish_auth(token=token, native=native)
+    return _finish_auth(token=token)
 
 
 @router.get("/me", response_model=UserResponse)
 def get_current_user_endpoint(
-    response: Response,
-    session: Annotated[str | None, Cookie(alias="ow_session")] = None,
     authorization: Annotated[str | None, Header()] = None,
     repo: UserRepository = Depends(_build_repo),
 ) -> UserResponse:
     """
     Return the current signed-in user, or 401.
-
-    Accepts the session token from either the ow_session cookie (web) or an
-    Authorization: Bearer header (native app).
-
-    Side effect (web only): if the cookie's JWT is within the refresh window,
-    this endpoint silently re-issues a fresh cookie. The native app handles
-    its own token lifetime, so no cookie is set for bearer callers.
 
     Returns:
         UserResponse on success.
@@ -212,51 +209,19 @@ def get_current_user_endpoint(
     Raises:
         401 if the token is missing, expired, or invalid.
     """
-    token = _token_from(session, authorization)
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
-
-    try:
-        user_id = verify_session_token(token)
-    except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session invalid or expired",
-        ) from exc
-
-    user = repo.get_by_id(user_id)
-    if user is None:
-        # User row was deleted but their token is still floating around.
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User no longer exists",
-        )
-
+    user = _user_from_token(_bearer_token(authorization), repo)
     repo.update_last_login(user.id)
-
-    # Cookie refresh only applies to web (cookie) callers; bearer callers
-    # (native) carry the token themselves and re-auth via /auth/google/login.
-    if session and not authorization and should_refresh(session):
-        new_token = issue_session_token(user.id)
-        _set_session_cookie(response, new_token)
-        logger.debug("Refreshed session cookie for user %s", user.id)
-
     return user
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(response: Response) -> None:
+def logout() -> None:
     """
-    Clear the session cookie. Idempotent — calling when already signed
-    out is fine.
+    Acknowledge sign-out. Sessions are stateless bearer JWTs, so there is
+    nothing to clear server-side — the app deletes its stored token.
+    Kept as an endpoint so the client has a stable hook if server-side
+    revocation is ever added.
     """
-    response.delete_cookie(
-        key=settings.session_cookie_name,
-        path="/",
-        secure=_secure_cookies(),
-        httponly=True,
-        samesite=_cookie_samesite(),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,15 +230,13 @@ def logout(response: Response) -> None:
 
 
 def current_user(
-    session: Annotated[str | None, Cookie(alias="ow_session")] = None,
     authorization: Annotated[str | None, Header()] = None,
     repo: UserRepository = Depends(_build_repo),
 ) -> UserResponse:
     """
     FastAPI dependency that materializes the signed-in user, or 401s.
 
-    Accepts the session token from either the ow_session cookie (web) or an
-    Authorization: Bearer header (native app). This is the single auth
+    Reads `Authorization: Bearer <token>`. This is the single auth
     chokepoint every protected route depends on.
 
     Use in routes:
@@ -287,28 +250,11 @@ def current_user(
     Raises:
         401 if the token is missing, invalid, or the user no longer exists.
     """
-    token = _token_from(session, authorization)
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
-    try:
-        user_id = verify_session_token(token)
-    except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session invalid or expired",
-        ) from exc
-
-    user = repo.get_by_id(user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User no longer exists",
-        )
-    return user
+    return _user_from_token(_bearer_token(authorization), repo)
 
 
 # ---------------------------------------------------------------------------
-# Cookie helpers
+# OAuth state cookie + redirect helpers
 # ---------------------------------------------------------------------------
 
 
@@ -317,118 +263,47 @@ def _secure_cookies() -> bool:
     return settings.environment == "production"
 
 
-def _cookie_samesite() -> str:
+def _set_state_cookie(response: RedirectResponse, state: str) -> None:
     """
-    Return the SameSite policy for our cookies.
+    Apply the short-lived OAuth state cookie.
 
-    In production the frontend and backend live on different sites
-    (e.g. *.vercel.app and *.up.railway.app), so cross-site requests
-    from the SPA need SameSite=None to carry the session cookie. That
-    combination requires Secure=True, which we already set in prod.
-
-    In development everything is on localhost (same site at the
-    eTLD+1 level) so SameSite=Lax is the safer, CSRF-resistant default.
+    SameSite=Lax is enough: the cookie only has to survive the top-level
+    GET navigation Google → /auth/google/callback inside the system browser.
     """
-    return "none" if settings.environment == "production" else "lax"
-
-
-def _set_session_cookie(response: Response, token: str) -> None:
-    """Apply the standard session cookie attributes."""
-    response.set_cookie(
-        key=settings.session_cookie_name,
-        value=token,
-        max_age=settings.session_max_age_days * 24 * 60 * 60,
-        httponly=True,
-        secure=_secure_cookies(),
-        samesite=_cookie_samesite(),
-        path="/",
-    )
-
-
-def _set_state_cookie(response: Response, state: str) -> None:
-    """Apply the short-lived OAuth state cookie."""
     response.set_cookie(
         key=_STATE_COOKIE,
         value=state,
         max_age=_STATE_COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         secure=_secure_cookies(),
-        samesite=_cookie_samesite(),
+        samesite="lax",
         path="/",
     )
 
 
-def _clear_state_cookie(response: Response) -> None:
-    """Wipe the OAuth state cookie after the callback succeeds."""
-    response.delete_cookie(
-        key=_STATE_COOKIE,
-        path="/",
-        secure=_secure_cookies(),
-        httponly=True,
-        samesite=_cookie_samesite(),
-    )
-
-
-def _redirect_to_frontend(error: str | None = None) -> RedirectResponse:
+def _finish_auth(token: str | None = None, error: str | None = None) -> RedirectResponse:
     """
-    Build the post-callback redirect back to the frontend.
-
-    On success: redirect to settings.frontend_url (root). The browser
-    sees the new session cookie and the frontend's auth check succeeds.
-
-    On failure: append ?auth_error=<code> so the frontend can show a
-    friendly message.
-    """
-    base = settings.frontend_url.rstrip("/")
-    url = f"{base}/?auth_error={error}" if error else f"{base}/"
-    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
-
-
-def _redirect_to_native(token: str | None = None, error: str | None = None) -> RedirectResponse:
-    """
-    Build the post-callback deep-link redirect into the native app.
+    Finalize the OAuth callback: deep-link the result into the mobile app.
 
     On success: overwatch://auth?token=<jwt> — the app captures the token
-    from its appUrlOpen listener and stores it in secure storage.
-
+    from the auth session result and stores it in secure storage.
     On failure: overwatch://auth?auth_error=<code>.
+    The OAuth state cookie is cleared either way.
+
+    Args:
+        token: The freshly-issued session JWT on success.
+        error: An error code on failure (mutually exclusive with token).
+
+    Returns:
+        302 redirect to the app's custom URL scheme.
     """
     if token:
         url = f"{_NATIVE_REDIRECT_SCHEME}://auth?token={token}"
     else:
         url = f"{_NATIVE_REDIRECT_SCHEME}://auth?auth_error={error or 'sign_in_failed'}"
-    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
-
-
-def _finish_auth(
-    token: str | None = None,
-    error: str | None = None,
-    native: bool = False,
-) -> RedirectResponse:
-    """
-    Finalize the OAuth callback: route the result to web or native.
-
-    Web: redirect to the frontend, setting the session cookie on success.
-    Native: deep-link the token (or error) into the app; no cookie is set.
-
-    In both cases the short-lived OAuth state + native marker cookies are
-    cleared.
-
-    Args:
-        token: The freshly-issued session JWT on success.
-        error: An error code on failure (mutually exclusive with token).
-        native: Whether the flow originated from the native app.
-    """
-    if native:
-        response = _redirect_to_native(token=token, error=error)
-    else:
-        response = _redirect_to_frontend(error=error)
-        if token:
-            _set_session_cookie(response, token)
-
-    _clear_state_cookie(response)
+    response = RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
     response.delete_cookie(
-        key=_NATIVE_COOKIE,
+        key=_STATE_COOKIE,
         path="/",
         secure=_secure_cookies(),
         httponly=True,

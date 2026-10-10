@@ -88,7 +88,7 @@ def authed_client(
     db_connection: sqlite3.Connection, test_user: UserResponse
 ) -> Generator[TestClient, None, None]:
     """
-    A TestClient carrying a valid session cookie for `test_user`, so it can
+    A TestClient carrying a valid bearer token for `test_user`, so it can
     hit the auth-gated routes. Same get_db override as `client`.
     """
 
@@ -97,7 +97,7 @@ def authed_client(
 
     app.dependency_overrides[get_db] = _override_get_db
     client = TestClient(app)
-    client.cookies.set("ow_session", issue_session_token(test_user.id))
+    client.headers["Authorization"] = f"Bearer {issue_session_token(test_user.id)}"
     yield client
     app.dependency_overrides.clear()
 

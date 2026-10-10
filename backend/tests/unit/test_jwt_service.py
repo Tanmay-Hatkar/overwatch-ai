@@ -6,7 +6,6 @@ Covers:
   - Expired tokens raise JWTError
   - Tampered tokens raise JWTError
   - Missing session_secret raises ValueError on issue
-  - should_refresh fires within the refresh window and not outside it
 """
 
 import time
@@ -19,7 +18,6 @@ import pytest
 from app.services.jwt_service import (
     JWTError,
     issue_session_token,
-    should_refresh,
     verify_session_token,
 )
 
@@ -92,34 +90,6 @@ def test_issue_raises_without_session_secret(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("app.services.jwt_service.settings.session_secret", "")
     with pytest.raises(ValueError):
         issue_session_token(uuid4())
-
-
-def test_should_refresh_true_when_within_refresh_window(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tokens about to expire return True."""
-    # Refresh window is 7 days; issue a token with 3 days left.
-    monkeypatch.setattr(
-        "app.services.jwt_service.settings.session_refresh_within_days", 7
-    )
-    token = issue_session_token(uuid4(), max_age_days=3)
-    assert should_refresh(token) is True
-
-
-def test_should_refresh_false_when_outside_refresh_window(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tokens with plenty of life left return False."""
-    monkeypatch.setattr(
-        "app.services.jwt_service.settings.session_refresh_within_days", 7
-    )
-    token = issue_session_token(uuid4(), max_age_days=30)
-    assert should_refresh(token) is False
-
-
-def test_should_refresh_false_for_garbage_token() -> None:
-    """Invalid tokens don't trigger refresh (verify_session_token rejects them first anyway)."""
-    assert should_refresh("not.a.jwt") is False
 
 
 def test_token_sub_is_uuid_string() -> None:

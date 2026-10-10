@@ -1,15 +1,17 @@
 """
-calendar.py — FastAPI routes for the calendar view + Google Calendar connect.
+calendar.py — FastAPI routes for reading the user's calendar.
 
 Display (per signed-in user):
   GET /calendar/today        Events for today.
   GET /calendar/week         Events for the current week (Mon–Sun).
   GET /calendar/connection   {connected: bool} — has the user linked Google?
 
-Connect flow (per signed-in user):
-  GET  /calendar/connect/google           Redirect to Google's consent screen.
-  GET  /calendar/connect/google/callback  Store the granted tokens.
-  POST /calendar/disconnect               Remove the stored tokens.
+  POST /calendar/disconnect  Remove the stored tokens.
+
+The browser-based "connect" flow was removed with the web client
+(ADR-0024): it authenticated the callback with the web session cookie,
+which the mobile app doesn't have. Re-adding connect for mobile needs a
+callback that identifies the user without a cookie (e.g. a signed state).
 
 Display endpoints return empty arrays (not 503) if the provider is
 unavailable — calendar context is supplementary, not critical.
@@ -27,8 +29,7 @@ import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, status
 
 from app.config import settings
 from app.database import get_db
@@ -42,17 +43,11 @@ from app.repositories.google_calendar_tokens_repository import (
     GoogleCalendarTokensRepository,
 )
 from app.routes.auth import current_user
-from app.services import google_calendar_oauth
 from app.services.calendar_service import CalendarService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
-
-# Short-lived cookie carrying the OAuth state between connect + callback.
-_CAL_STATE_COOKIE = "ow_cal_oauth_state"
-_CAL_STATE_MAX_AGE_SECONDS = 600  # 10 minutes
-
 
 # ---------------------------------------------------------------------------
 # Default (non-user-scoped) provider singleton — used by briefings.py.
@@ -164,96 +159,6 @@ def get_connection_status(
     return {"connected": repo.get(user.id) is not None}
 
 
-# ---------------------------------------------------------------------------
-# Connect flow
-# ---------------------------------------------------------------------------
-
-
-@router.get("/connect/google")
-def connect_google(user: UserResponse = Depends(current_user)) -> RedirectResponse:
-    """
-    Start the calendar OAuth flow: set a state cookie and 302 to Google.
-
-    Requires an authenticated user — only a signed-in user can link a
-    calendar to their account.
-    """
-    if not google_calendar_oauth.is_configured():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google Calendar connect is not configured on this server.",
-        )
-
-    state = google_calendar_oauth.generate_state()
-    auth_url = google_calendar_oauth.build_authorization_url(state)
-
-    response = RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
-    response.set_cookie(
-        key=_CAL_STATE_COOKIE,
-        value=state,
-        max_age=_CAL_STATE_MAX_AGE_SECONDS,
-        httponly=True,
-        secure=settings.environment == "production",
-        samesite="lax",
-        path="/",
-    )
-    return response
-
-
-@router.get("/connect/google/callback")
-def connect_google_callback(
-    request: Request,
-    code: str | None = None,
-    state: str | None = None,
-    error: str | None = None,
-    user: UserResponse = Depends(current_user),
-    conn: sqlite3.Connection = Depends(get_db),
-) -> RedirectResponse:
-    """
-    Receive Google's redirect, verify state, exchange the code, store the
-    tokens for the user, then redirect back to the frontend.
-    """
-    if error:
-        logger.info("Calendar OAuth callback returned error: %s", error)
-        return _redirect_to_frontend(calendar="denied")
-
-    if not code or not state:
-        return _redirect_to_frontend(calendar="missing_code")
-
-    expected_state = request.cookies.get(_CAL_STATE_COOKIE)
-    if not expected_state or expected_state != state:
-        logger.warning("Calendar OAuth state mismatch — possible CSRF or expired flow")
-        return _redirect_to_frontend(calendar="state_mismatch")
-
-    try:
-        creds = google_calendar_oauth.exchange_code_for_credentials(code)
-    except google_calendar_oauth.CalendarOAuthError:
-        logger.exception("Failed to exchange calendar OAuth code")
-        return _redirect_to_frontend(calendar="exchange_failed")
-
-    repo = GoogleCalendarTokensRepository(conn)
-    repo.upsert(
-        user.id,
-        access_token=creds["access_token"],
-        refresh_token=creds["refresh_token"],
-        token_uri=creds["token_uri"],
-        client_id=creds["client_id"],
-        client_secret=creds["client_secret"],
-        scopes=creds["scopes"],
-        expiry=creds["expiry"],
-    )
-    logger.info("Calendar connected for user %s", user.id)
-
-    response = _redirect_to_frontend(calendar="connected")
-    response.delete_cookie(
-        key=_CAL_STATE_COOKIE,
-        path="/",
-        secure=settings.environment == "production",
-        httponly=True,
-        samesite="lax",
-    )
-    return response
-
-
 @router.post("/disconnect", status_code=status.HTTP_204_NO_CONTENT)
 def disconnect_google(
     user: UserResponse = Depends(current_user),
@@ -262,20 +167,3 @@ def disconnect_google(
     """Remove the user's stored Google Calendar tokens. Idempotent."""
     repo = GoogleCalendarTokensRepository(conn)
     repo.delete(user.id)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _redirect_to_frontend(calendar: str) -> RedirectResponse:
-    """
-    Redirect back to the frontend after the connect flow, with a
-    ?calendar=<status> query param the UI can surface (toast/banner).
-    """
-    base = settings.frontend_url.rstrip("/")
-    return RedirectResponse(
-        url=f"{base}/?calendar={calendar}",
-        status_code=status.HTTP_302_FOUND,
-    )

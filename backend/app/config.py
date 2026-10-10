@@ -86,27 +86,15 @@ class Settings(BaseSettings):
     )
     session_secret: str = Field(
         default="",
-        description="HS256 signing key for JWT session cookies (32+ random chars)",
-    )
-    session_cookie_name: str = Field(
-        default="ow_session",
-        description="Name of the cookie that stores the JWT session",
+        description="HS256 signing key for JWT session tokens (32+ random chars)",
     )
     session_max_age_days: int = Field(
         default=30,
-        description="JWT expiry window. Refreshed when within session_refresh_within_days of expiry.",
-    )
-    session_refresh_within_days: int = Field(
-        default=7,
-        description="If a JWT is within this many days of expiry, /auth/me re-issues a fresh one.",
+        description="JWT expiry window. The app signs in again once its token expires.",
     )
     backend_url: str = Field(
         default="http://localhost:8000",
         description="Public URL of this backend (used to build the OAuth redirect_uri)",
-    )
-    frontend_url: str = Field(
-        default="http://localhost:5173",
-        description="Public URL of the frontend (used for post-login redirect + CORS)",
     )
     environment: str = Field(
         default="development",
@@ -117,10 +105,10 @@ class Settings(BaseSettings):
     # Production hardening
     # =========================================================================
     # Comma-separated list of origins allowed to call the API (browser CORS).
-    # In dev, defaults to the Vite server. In prod, set to the Vercel URL.
-    # Multiple origins: "https://overwatch.vercel.app,https://overwatch.dev"
+    # The native app isn't subject to CORS; this only matters for running
+    # the mobile app in a browser via `expo start --web` (Metro on :8081).
     cors_origins: str = Field(
-        default="http://localhost:5173,http://localhost:5174",
+        default="http://localhost:8081",
         description="Comma-separated origins allowed for CORS",
     )
 

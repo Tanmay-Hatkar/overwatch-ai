@@ -1,8 +1,0 @@
-{
-  "appId": "com.tanmayhatkar.overwatch",
-  "appName": "Overwatch",
-  "webDir": "dist",
-  "android": {
-    "allowMixedContent": false
-  }
-}

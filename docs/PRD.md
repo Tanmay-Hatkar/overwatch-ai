@@ -1,7 +1,7 @@
 # Product Requirements Document — Overwatch
 
 **Status:** Draft (active development)
-**Last updated:** 2026-07-15 (v1 refocus — see ADR-0023)
+**Last updated:** 2026-10-09 (mobile-only client — see ADR-0024)
 **Owner:** Tanmay Hatkar
 
 ---
@@ -71,9 +71,9 @@ ICP in one sentence: **Someone who writes a to-do list every morning and stops l
 
 **Mobile-first, as of the v1 refocus (ADR-0023).** The struggler this is for
 lives on their phone, not at a desk with a browser tab open. The native
-Android app (Capacitor-wrapped) is the primary product; the web SPA is the
-shell it wraps, not a desktop destination in its own right. Design and
-build decisions default to mobile unless a reason is stated.
+Android app (React Native / Expo, `mobile/`) is **the** product — the web
+SPA and its Capacitor wrapper were removed in ADR-0024. Design and build
+decisions default to mobile unless a reason is stated.
 
 Positioning note, sharpened after a competitive pass (see ADR-0023): the
 gap this fills isn't "no other app reminds you of things" — several do.
@@ -112,14 +112,16 @@ where it's deliberately headed next, not the original MVP guess.
 
 ### In scope for v1
 
-- **Mobile-first.** The native Android app is the primary target; the web
-  SPA is mobile-width by default, not a desktop layout.
+- **Mobile-only.** The native Android app (`mobile/`) is the only client
+  (ADR-0024).
 - Single active user in practice today; auth + multi-tenant data scoping
   exist in the codebase (ADR-0013) but are not exposed as a public product
   yet — see "Deferred," below.
 - Local + cloud LLM via fallback chain (OpenAI → Groq → Ollama)
-- Conversational input: text and voice, both first-class (voice is no
-  longer "augmentation" — native STT/TTS shipped and are load-bearing)
+- Conversational input: text and voice, both first-class. **Gap as of
+  2026-10-09:** voice (STT/TTS) shipped in the web/Capacitor client and
+  was removed with it (ADR-0024); `mobile/` is text-only until voice is
+  rebuilt there.
 - Commitment capture + surgical, exactly-timed follow-up
 - Morning brief, evening reflection — the daily bookending ritual
 - Rate-goal tracking with agency-preserving renegotiation
@@ -138,7 +140,9 @@ where it's deliberately headed next, not the original MVP guess.
   contradiction of principle #3 ("no streak tyranny," §5) if ever shipped
   (ADR-0023).
 - Multiple calendar providers (Outlook, Apple) — moot while calendar has no UI
-- Desktop as a first-class target
+- Desktop or web as a target at all (web client removed, ADR-0024; a
+  browser extension is the likely shape if laptop-side drift is ever
+  addressed)
 - Production hosting for users other than the author
 
 ### Deferred (built or partially built, intentionally not turned on)

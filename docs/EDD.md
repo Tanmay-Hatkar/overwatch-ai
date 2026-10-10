@@ -1,7 +1,7 @@
 # Engineering Design Document — Overwatch
 
 **Status:** Living document (filled out as architecture decisions are made)
-**Last updated:** 2026-05-12
+**Last updated:** 2026-10-09
 
 This document captures HOW Overwatch is built — system architecture, data model, layered design, integration patterns, and major engineering decisions.
 
@@ -12,23 +12,27 @@ For individual decisions (WHEN and WHY each choice was made), see [`adr/`](adr/)
 
 ## 1. System architecture (high level)
 
-_To be filled before slice 1 implementation begins._
-
-Planned shape:
-
 ```
-React Frontend  ↔  FastAPI Backend  ↔  Database (Postgres / SQLite)
-                          ↓
-                  External services:
-                  - Google Calendar API
-                  - LLM providers (OpenAI / Groq / Ollama)
+Mobile app (React Native + Expo)  ↔  FastAPI backend  ↔  SQLite
+   on-device: notifications,              ↓
+   ring alarm, widget              External services:
+                                   - LLM providers (OpenAI / Groq / Ollama)
+                                   - Google Calendar API (read-only, dormant)
 ```
+
+`mobile/` is the only client (ADR-0024). It authenticates with a bearer
+JWT obtained via Google sign-in in the system browser, deep-linked back as
+`overwatch://auth?token=…`. Due-time reminders and the stale-plan
+notification are scheduled **on the device**; the server's only background
+job is the StaleCheckScheduler, which records the one-time check-in as a
+conversation turn. See `HANDBOOK.md` §3–4 for the component map and a
+request walkthrough.
 
 ## 2. Layered architecture
 
 ```
-UI (React components)
-    ↓ HTTP
+UI (React Native screens/components, mobile/)
+    ↓ HTTPS + Bearer token
 Routes (FastAPI functions)
     ↓
 Services (business logic classes)
@@ -83,11 +87,15 @@ Considerations to address there:
 
 _To be filled in slice 2 (first integration slice)._
 
-OAuth2 flow. `token.json` stored locally, refreshed automatically. Provider pattern (`CalendarProvider` abstract base) so additional providers (Outlook, Apple) can be added later without touching core logic.
+Read-only, background context only (ADR-0022). The browser-based connect
+flow was removed with the web client (ADR-0024); stored per-user tokens and
+the providers remain, so a mobile connect flow can plug in later. Provider pattern (`CalendarProvider` abstract base) so additional providers (Outlook, Apple) can be added later without touching core logic.
 
 ## 7. Deployment
 
-_Not relevant for v1 (local-use only). Will be filled if/when we share with other users._
+Backend on Railway with a SQLite volume (see `DEPLOYMENT.md`). The mobile
+app is built with Expo (`expo run:android` / EAS) and points at the backend
+via `expo.extra.apiBaseUrl` in `mobile/app.json`.
 
 ## 8. Logging & observability
 

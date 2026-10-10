@@ -67,7 +67,7 @@ Services (classes)           ← business logic; orchestrate repositories
     ↑
 Routes (functions)           ← FastAPI handlers; translate HTTP ↔ service calls
     ↑
-UI (React components)        ← display + interaction
+UI (React Native, mobile/)   ← display + interaction
 ```
 
 Each layer depends only on the one below. **No skipping layers.** A route never talks directly to a repository — it goes through a service.
@@ -79,7 +79,7 @@ A slice is "done" when:
 - Feature works end-to-end (manually verifiable)
 - Unit tests cover new code (target ≥80% line coverage)
 - Integration tests cover new API endpoints
-- All linters pass (`ruff`, `prettier`)
+- All linters pass (`ruff`, mobile `eslint`)
 - ADR written if a non-trivial decision was made
 - PR merged to `main` (squash) with CI green
 - README / EDD updated if architecture or setup changed
@@ -101,13 +101,13 @@ Full details in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Tech stack (current)
 
-- **Language:** Python 3.12 (backend), JavaScript/JSX (frontend)
+- **Language:** Python 3.12 (backend), JavaScript + Kotlin native modules (mobile)
 - **Backend:** FastAPI + uvicorn
-- **Frontend:** React + Vite + Tailwind CSS
-- **Database:** Postgres via Supabase (cloud), SQLite (local dev)
+- **Client:** React Native + Expo (`mobile/`) — the only client (ADR-0024)
+- **Database:** SQLite (Railway volume in production, local file in dev)
 - **LLM providers:** OpenAI (primary), Groq (fallback), Ollama (local fallback)
-- **External APIs:** Google Calendar, Gmail (slice 2+)
-- **Testing:** pytest + pytest-mock (backend), Vitest (frontend, slice 1+)
-- **Linting/formatting:** ruff (Python), prettier (frontend)
+- **External APIs:** Google Calendar (read-only, dormant)
+- **Testing:** pytest + pytest-mock (backend), Jest + React Native Testing Library (mobile)
+- **Linting/formatting:** ruff (Python), ESLint (mobile)
 
 Update this section if the stack changes. Create an ADR for any stack-level decision.

@@ -1,7 +1,7 @@
 # Overwatch — Deployment Runbook
 
 **Status:** Active. Single-user private deploy (email-whitelist gated).
-**Stack:** Railway (backend + SQLite volume) + Vercel (frontend static site).
+**Stack:** Railway (backend + SQLite volume) + the Android app in `mobile/` (ADR-0024).
 **Target time:** ~3-4 hours end-to-end the first time.
 
 This runbook is the source of truth for "how is Overwatch deployed." If you ever forget how a wire is connected, look here first.
@@ -11,21 +11,18 @@ This runbook is the source of truth for "how is Overwatch deployed." If you ever
 ## 0. The end state
 
 ```
-   Browser / installed PWA on your phone
-                  │
+   Overwatch Android app (mobile/, Expo build)
+                  │   Authorization: Bearer <jwt>
                   ▼
-   https://overwatch.vercel.app          (Vercel — frontend)
-                  │
-                  ▼
-   https://overwatch.up.railway.app      (Railway — backend container)
+   https://overwatch-ai-production.up.railway.app   (Railway — backend)
                   │
         ┌─────────┼─────────────────┐
         ▼         ▼                 ▼
-     Groq API  Google APIs    SQLite on Railway volume
+     LLM APIs  Google OAuth   SQLite on Railway volume
                                     (/data/overwatch.db)
 ```
 
-Two running services. One SQLite file. Three external APIs.
+One running service. One SQLite file. Reminders fire on the phone, not the server.
 
 ---
 
@@ -37,8 +34,6 @@ Before starting, make sure you have:
 - [ ] **Google Cloud Console** project with OAuth Client ID + Secret (already done — you have `credentials.json`)
 - [ ] **Groq account** at https://console.groq.com (free) → generate an API key
 - [ ] **Railway account** at https://railway.com → sign in with GitHub (recommended)
-- [ ] **Vercel account** at https://vercel.com → sign in with GitHub (recommended)
-- [ ] **VAPID keys** generated (already in your local `.env`)
 
 If any are missing, stop and create them before proceeding.
 
@@ -48,13 +43,12 @@ If any are missing, stop and create them before proceeding.
 
 Confirm the latest production-readiness code passes tests on your machine:
 
-```powershell
-cd c:\Tanmay\Self-Study\overwatch\backend
-pip install -e ".[dev]"
-python -m pytest -q
+```bash
+cd backend && pip install -e ".[dev]" && python -m pytest -q
+cd ../mobile && npm ci && npm test && npm run lint
 ```
 
-Expect **194 passed**.
+Everything should pass (the same checks CI runs).
 
 ---
 
@@ -85,11 +79,6 @@ GOOGLE_CLIENT_ID=<from credentials.json>
 GOOGLE_CLIENT_SECRET=<from credentials.json>
 ALLOWED_GOOGLE_EMAILS=tanmay.hats@gmail.com
 
-# Web Push (copy from local .env)
-VAPID_PUBLIC_KEY=<from local .env>
-VAPID_PRIVATE_KEY=<from local .env>
-VAPID_SUBJECT=mailto:tanmay.hats@gmail.com
-
 # LLM (Groq is free; OpenAI optional)
 GROQ_API_KEY=<from console.groq.com>
 OPENAI_API_KEY=<optional, set a $5 cap in OpenAI dashboard if used>
@@ -101,8 +90,7 @@ DATABASE_PATH=/data/overwatch.db
 
 # URLs — fill these in AFTER first deploy generates them (see section 3.5)
 BACKEND_URL=<https://...up.railway.app, fill in section 3.5>
-FRONTEND_URL=<https://...vercel.app, fill in section 4.4>
-CORS_ORIGINS=<same as FRONTEND_URL, fill in section 4.4>
+# CORS_ORIGINS is not needed in production: the native app isn't subject to CORS.
 ```
 
 ### 3.4 First deploy
@@ -122,45 +110,13 @@ CORS_ORIGINS=<same as FRONTEND_URL, fill in section 4.4>
 4. Railway will redeploy automatically.
 5. Hit `https://<your-railway-url>/health` in a browser. Should see `{"status":"ok"}`.
 
-If you see `{"status":"ok"}`, **the backend is live.** Move on to Vercel.
+If you see `{"status":"ok"}`, **the backend is live.**
 
 ---
 
-## 4. Deploy the frontend to Vercel
+## 4. Point the app at the backend
 
-### 4.1 Create the project
-
-1. Go to https://vercel.com → **Add New** → **Project**
-2. Import the `overwatch-ai` repo (authorize Vercel if not already)
-3. **Root Directory:** set to `frontend` (Vercel asks during setup)
-4. Framework Preset: Vite (auto-detected)
-5. Don't deploy yet — first set env vars (next step)
-
-### 4.2 Configure environment variables
-
-Click **Environment Variables** and add:
-
-```
-VITE_API_BASE_URL=<your Railway URL from section 3.5>
-```
-
-Example: `VITE_API_BASE_URL=https://overwatch-production-abc123.up.railway.app`
-
-Set for: **Production, Preview, Development** (check all three).
-
-### 4.3 Deploy
-
-Click **Deploy**. First build takes ~1-2 min.
-
-### 4.4 Get the Vercel URL + wire it back to Railway
-
-1. Vercel gives you a URL like `overwatch-frontend-xyz.vercel.app`.
-2. Go back to Railway → **Variables** and set:
-   ```
-   FRONTEND_URL=https://overwatch-frontend-xyz.vercel.app
-   CORS_ORIGINS=https://overwatch-frontend-xyz.vercel.app
-   ```
-3. Railway redeploys.
+Set `expo.extra.apiBaseUrl` in `mobile/app.json` to the Railway URL from §3.5, then build the app (`cd mobile && npx expo run:android`, or an EAS build). The app reads this at build time.
 
 ---
 
@@ -179,60 +135,23 @@ This is **the most common deploy bug.** The OAuth callback URL must EXACTLY matc
 
 Keep the existing `http://localhost:8000/auth/google/callback` entry too so local dev still works.
 
-### 5b. Add the Google Calendar connect redirect URI
-
-The "Connect Google Calendar" feature (ADR-0011) uses a SECOND redirect
-URI on the same OAuth client. Add both of these as Authorized redirect URIs:
-
-```
-https://<your-railway-url>/calendar/connect/google/callback
-http://localhost:8000/calendar/connect/google/callback
-```
-
-Without these, clicking "Connect Google Calendar" returns Google's
-`redirect_uri_mismatch` error. The calendar scope (`calendar.readonly`)
-is requested incrementally — no separate client or consent-screen config
-is needed for a project in testing mode with you as a test user.
-
 ---
 
 ## 6. Smoke test
 
-1. Open `https://<your-vercel-url>` in a desktop browser
-2. You should see the orange "Overwatch" login screen
-3. Click **Sign in with Google**
-4. Google's consent screen → click Continue
-5. You should land back on the Overwatch home page with your name + picture in the header
-6. Type "remind me to test the deploy in 1 minute" in the ChatBar
-7. After ~1 minute, you should receive a Web Push notification (if you granted permission)
+1. Open the Overwatch app on your phone
+2. Tap **Sign in with Google** → the system browser opens Google's consent screen
+3. After consenting, the browser hands back to the app (`overwatch://auth`) and you land on the Todos screen
+4. In chat, type "remind me to test the deploy in 2 minutes"
+5. Close the app. Within ~2 minutes you should get the reminder notification (scheduled on the device). Ignore it, and it should escalate to the full-screen ring.
 
-**If anything breaks here, see §9 Troubleshooting.**
+**If anything breaks here, see §8 Troubleshooting.**
 
 ---
 
-## 7. Install the PWA on your phone
+## 7. Re-deploy procedure (for future updates)
 
-### iOS (Safari)
-
-1. Open `https://<your-vercel-url>` in Safari (not Chrome)
-2. Tap the Share icon (square with up-arrow)
-3. Scroll down → **Add to Home Screen**
-4. Tap **Add**
-5. Open the new Overwatch icon from your home screen — opens fullscreen, no browser bar
-
-### Android (Chrome)
-
-1. Open `https://<your-vercel-url>` in Chrome
-2. Tap the 3-dot menu (top-right)
-3. **Add to Home screen** or **Install app**
-4. Confirm
-5. Opens like a native app from the home screen
-
----
-
-## 8. Re-deploy procedure (for future updates)
-
-Both Railway and Vercel auto-deploy on every push to `main`. So the loop is:
+Railway auto-deploys the backend on every push to `main`. App changes need a new build (`npx expo run:android` or EAS). The loop is:
 
 ```powershell
 # Make changes locally
@@ -248,15 +167,14 @@ git add .
 git commit -m "feat: <what you changed>"
 git push
 
-# Railway + Vercel both build automatically.
-# Watch their dashboards for green checkmarks.
+# Railway builds automatically — watch its dashboard for a green check.
 ```
 
-If a deploy fails, both platforms keep the previous version running. Fix the bug, push again.
+If a deploy fails, Railway keeps the previous version running. Fix the bug, push again.
 
 ---
 
-## 9. Troubleshooting
+## 8. Troubleshooting
 
 ### Backend: 500 on every request
 
@@ -264,35 +182,28 @@ If a deploy fails, both platforms keep the previous version running. Fix the bug
 - Most common: missing env var (a Pydantic Settings validation error appears at startup)
 - Verify SESSION_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET are all set
 
-### Frontend: Blank page on Vercel
-
-- Open browser devtools → Network tab → reload
-- If `index.html` loads but `assets/index-XXX.js` 404s, build failed silently → check Vercel build logs
-- If JS loads but API calls fail with CORS errors → check `CORS_ORIGINS` matches your Vercel URL EXACTLY (no trailing slash)
-
 ### Sign-in: redirect_uri_mismatch
 
 - Google's error page says `Error 400: redirect_uri_mismatch`
 - The URL Google saw doesn't match any URI registered in GCP
 - Copy the exact "Request details" URL Google shows and add it as an Authorized redirect URI in GCP
 
-### Sign-in: redirects to home with `?auth_error=email_not_allowed`
+### Sign-in: the app shows `email_not_allowed`
 
 - The email you used isn't in `ALLOWED_GOOGLE_EMAILS`
 - Either add it (in Railway env vars), or sign in with the right account
 
-### Push notifications don't arrive
+### Reminders don't arrive
 
-- Did you grant notification permission? Check site settings
-- iOS: works only if installed as PWA (Add to Home Screen), iOS 16.4+
-- Check Railway logs: ReminderScheduler should log a "broadcasting push" line at the due time
-- Common issue: VAPID public key in env vars must match what the service worker subscribed with. If you regenerated VAPID keys after subscribing, unsubscribe + re-subscribe in the UI.
+- Reminders are scheduled **on the phone** (expo-notifications), not by the server
+- Check Android notification permission for Overwatch, and "Alarms & reminders" (exact alarms) permission
+- Battery optimisation can delay notifications: set Overwatch to "Unrestricted"
+- Reopen the app once: it reconciles scheduled reminders against the current commitment list
 
 ### Calendar events not showing
 
-- Calendar isn't auto-configured per-user yet (that's slice 12)
-- For now: the deployed instance has no Google Calendar access
-- Workaround: just don't use calendar features; commitments/chat work fine
+- Expected: there is no way to connect a calendar from the mobile app yet (ADR-0024)
+- Briefings work fine without it — calendar is background context only (ADR-0022)
 
 ### "Database is locked" errors in Railway logs
 
@@ -307,32 +218,28 @@ If a deploy fails, both platforms keep the previous version running. Fix the bug
 
 ---
 
-## 10. Cost monitoring checklist
+## 9. Cost monitoring checklist
 
 - [ ] Set OpenAI dashboard monthly budget cap to $5 (https://platform.openai.com/account/limits)
 - [ ] Enable Railway billing alerts (Settings → Notifications → Usage limits)
-- [ ] Watch Vercel Hobby tier limits (100GB bandwidth/mo — you'll never hit this)
 - [ ] Quarterly: check GCP Console for any unexpected API usage spikes
 
 ---
 
-## 11. Tearing it down (if you ever want to)
+## 10. Tearing it down (if you ever want to)
 
 If you stop using Overwatch:
 
 1. **Railway:** Settings → Danger → Delete Service. Volume gets deleted too (download `overwatch.db` first if you want to keep data).
-2. **Vercel:** Project Settings → Delete. Domain becomes available for re-use.
-3. **GCP:** Remove the Authorized redirect URIs (optional but tidy).
-4. **Groq:** No action needed — free tier auto-expires unused keys.
+2. **GCP:** Remove the Authorized redirect URIs (optional but tidy).
+3. **Groq:** No action needed — free tier auto-expires unused keys.
 
 ---
 
-## 12. References
+## 11. References
 
 - [Railway docs — Python deploys](https://docs.railway.com/guides/python)
-- [Vercel docs — Vite framework](https://vercel.com/docs/frameworks/vite)
 - [Google OAuth — Authorized redirect URIs](https://developers.google.com/identity/protocols/oauth2/web-server#redirect_uri)
-- [Web Push protocol](https://developers.google.com/web/fundamentals/push-notifications)
-- ADR-0009 — auth design
+- ADR-0009 — auth design; ADR-0024 — mobile-only client (bearer auth)
 - ADR-0010 (on `feature/slice-12-multi-tenancy` branch) — multi-tenancy design
 - `docs/HANDBOOK.md` — project bird's-eye view

@@ -37,7 +37,7 @@ describe('BriefingScreen', () => {
         screen.getByText('You have two things today — the standup at 9:30 and the Vosyn report by 5pm.'),
       ).toBeTruthy()
       expect(screen.getByText('2 today')).toBeTruthy()
-      expect(screen.getByText('1 overdue')).toBeTruthy()
+      expect(screen.getByText('1 from earlier')).toBeTruthy()
     })
   })
 })

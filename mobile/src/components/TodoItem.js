@@ -1,79 +1,82 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Ionicons } from '@react-native-vector-icons/ionicons'
 import { color, font, radius, spacing } from '../theme'
 import { colorForSection } from '../lib/sectionColor'
 
 /**
- * Single commitment row. Ports the visual language of
- * frontend/src/components/CommitmentList.jsx's CommitmentItem (checkbox,
- * overdue red accent, lead-time badge, recurrence badge) but tap-to-edit
- * opens the edit modal instead of an inline contentEditable-style field —
- * RN has no DOM equivalent, and a modal is the more standard native pattern.
+ * Single commitment row: checkbox, text, and a quiet meta line (time,
+ * reminder lead, repeat, section). Tap the row to edit; delete lives in
+ * the edit sheet rather than as an always-visible × on every row, so a
+ * stray tap can't open a destructive dialog.
+ *
+ * A commitment whose time has passed reads "from earlier" in warm amber,
+ * not "overdue" in alarm red (PRD §5 principle 3: recall, never judgment).
  */
-export default function TodoItem({ commitment, onToggle, onPress, onDelete }) {
+export default function TodoItem({ commitment, onToggle, onPress }) {
   const isDone = commitment.status === 'done'
   const dueInfo = formatDueAt(commitment.due_at, isDone)
-  const hasRecurrence = commitment.recurrence && commitment.recurrence !== 'none'
+  const isEarlier = !!dueInfo?.earlier && !isDone
+  const hasRecurrence = !!commitment.recurrence && commitment.recurrence !== 'none'
   const hasLead = commitment.reminder_lead_minutes > 0
-  const hasMeta = dueInfo || commitment.group_name || hasLead
+  const hasSection = !!commitment.group_name
+  const hasMeta = !!dueInfo || hasSection || hasLead || hasRecurrence
 
   return (
     <Pressable
       onPress={() => onPress(commitment)}
+      accessibilityRole="button"
+      accessibilityLabel={`Edit ${commitment.text}`}
       style={({ pressed }) => [
         styles.row,
         isDone && styles.rowDone,
-        dueInfo?.overdue && !isDone && styles.rowOverdue,
+        isEarlier && styles.rowEarlier,
         pressed && styles.rowPressed,
       ]}
     >
-      <Pressable onPress={() => onToggle(commitment)} hitSlop={8} style={styles.checkbox}>
+      <Pressable
+        onPress={() => onToggle(commitment)}
+        hitSlop={10}
+        style={styles.checkbox}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: isDone }}
+        accessibilityLabel={isDone ? `Mark ${commitment.text} not done` : `Mark ${commitment.text} done`}
+      >
         <View style={[styles.checkboxInner, isDone && styles.checkboxChecked]}>
-          {isDone && <Text style={styles.checkMark}>✓</Text>}
+          {isDone && <Ionicons name="checkmark" size={14} color={color.onAccent} />}
         </View>
       </Pressable>
 
       <View style={styles.textCol}>
-        <View style={styles.titleRow}>
-          <Text style={[styles.text, isDone && styles.textDone]} numberOfLines={2}>
-            {commitment.text}
-          </Text>
-          {hasRecurrence && (
-            <View style={styles.recurrenceBadge}>
-              <Text style={styles.recurrenceBadgeText}>↻ {commitment.recurrence}</Text>
-            </View>
-          )}
-        </View>
+        <Text style={[styles.text, isDone && styles.textDone]} numberOfLines={2}>
+          {commitment.text}
+        </Text>
 
         {hasMeta && (
           <View style={styles.metaRow}>
-            {dueInfo && (
-              <Text style={[styles.dueLabel, dueInfo.overdue && !isDone && styles.dueLabelOverdue]}>
-                {dueInfo.label}
-              </Text>
+            {!!dueInfo && (
+              <Text style={[styles.dueLabel, isEarlier && styles.dueLabelEarlier]}>{dueInfo.label}</Text>
             )}
             {hasLead && (
-              <View style={styles.metaPill}>
-                <Text style={styles.metaPillText}>🔔 {formatLead(commitment.reminder_lead_minutes)}</Text>
+              <View style={styles.metaItem}>
+                <Ionicons name="notifications-outline" size={11} color={color.textMuted} />
+                <Text style={styles.metaText}>{formatLead(commitment.reminder_lead_minutes)}</Text>
               </View>
             )}
-            {commitment.group_name && (
-              <View style={styles.metaPill}>
-                <View style={[styles.metaPillDot, { backgroundColor: colorForSection(commitment.group_name) }]} />
-                <Text style={styles.metaPillText}>{commitment.group_name}</Text>
+            {hasRecurrence && (
+              <View style={styles.metaItem}>
+                <Ionicons name="repeat" size={12} color={color.textMuted} />
+                <Text style={styles.metaText}>{commitment.recurrence}</Text>
+              </View>
+            )}
+            {hasSection && (
+              <View style={styles.metaItem}>
+                <View style={[styles.sectionDot, { backgroundColor: colorForSection(commitment.group_name) }]} />
+                <Text style={styles.metaText}>{commitment.group_name}</Text>
               </View>
             )}
           </View>
         )}
       </View>
-
-      <Pressable
-        onPress={() => onDelete(commitment)}
-        hitSlop={8}
-        style={({ pressed }) => [styles.deleteBtn, pressed && styles.deleteBtnPressed]}
-        accessibilityLabel={`Delete ${commitment.text}`}
-      >
-        <Text style={styles.deleteText}>×</Text>
-      </Pressable>
     </Pressable>
   )
 }
@@ -87,21 +90,20 @@ function formatDueAt(dueAt, isDone) {
   if (!dueAt) return null
   const due = new Date(dueAt)
   const now = new Date()
-  const overdue = !isDone && due < now
+  const earlier = !isDone && due < now
   const sameDay =
     due.getFullYear() === now.getFullYear() &&
     due.getMonth() === now.getMonth() &&
     due.getDate() === now.getDate()
 
   const time = due.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  let label
-  if (overdue) label = `overdue · ${time}`
-  else if (sameDay) label = `due today · ${time}`
-  else {
-    const day = due.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
-    label = `due ${day} · ${time}`
-  }
-  return { label, overdue }
+  if (earlier) return { label: sameDay ? `from earlier · ${time}` : `from ${shortDay(due)}`, earlier }
+  if (sameDay) return { label: `today · ${time}`, earlier }
+  return { label: `${shortDay(due)} · ${time}`, earlier }
+}
+
+function shortDay(date) {
+  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 const styles = StyleSheet.create({
@@ -119,52 +121,32 @@ const styles = StyleSheet.create({
   },
   rowPressed: { backgroundColor: color.surfaceRaised },
   rowDone: { opacity: 0.5 },
-  rowOverdue: { borderColor: color.overdueBorder, backgroundColor: color.overdueTint },
-  checkbox: { padding: 2, marginTop: 1 },
+  rowEarlier: { borderColor: color.earlierBorder, backgroundColor: color.earlierTint },
+  checkbox: { paddingTop: 1 },
   checkboxInner: {
-    width: 21,
-    height: 21,
-    borderRadius: 6,
+    width: 22,
+    height: 22,
+    borderRadius: radius.pill,
     borderWidth: 1.5,
     borderColor: color.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkboxChecked: { backgroundColor: color.accent, borderColor: color.accent },
-  checkMark: { color: color.onAccent, fontSize: 13, fontWeight: '700' },
   textCol: { flex: 1 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs + 2 },
-  text: { color: color.textPrimary, fontSize: font.md + 1, flexShrink: 1 },
+  text: { color: color.textPrimary, fontSize: font.lg, lineHeight: 21 },
   textDone: { textDecorationLine: 'line-through', color: color.textSecondary },
-  recurrenceBadge: {
-    backgroundColor: color.accentMuted,
-    paddingHorizontal: spacing.xs + 2,
-    paddingVertical: 1,
-    borderRadius: radius.sm,
-  },
-  recurrenceBadgeText: { fontSize: font.xs - 1, color: '#fdba74', fontWeight: '700' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs + 2, marginTop: spacing.xs + 2 },
-  dueLabel: { fontSize: font.xs, color: color.textMuted },
-  dueLabelOverdue: { color: color.danger, fontWeight: '600' },
-  metaPill: {
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: color.surfaceRaised,
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.xs + 2,
-    paddingVertical: 1,
+    flexWrap: 'wrap',
+    columnGap: spacing.md,
+    rowGap: spacing.xs,
+    marginTop: spacing.xs + 2,
   },
-  metaPillDot: { width: 6, height: 6, borderRadius: radius.pill, marginRight: 4 },
-  metaPillText: { fontSize: font.xs - 1, color: color.textMuted },
-  deleteBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  deleteBtnPressed: { backgroundColor: color.surfaceRaised },
-  deleteText: { color: color.textMuted, fontSize: 20, lineHeight: 22 },
+  dueLabel: { fontSize: font.sm, color: color.textMuted },
+  dueLabelEarlier: { color: color.earlier, fontWeight: '600' },
+  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metaText: { fontSize: font.sm, color: color.textMuted },
+  sectionDot: { width: 7, height: 7, borderRadius: radius.pill },
 })

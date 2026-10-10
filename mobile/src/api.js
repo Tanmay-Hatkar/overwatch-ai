@@ -13,7 +13,10 @@ import { getStoredToken, setStoredToken, clearStoredToken } from './lib/auth'
 import { googleLogin } from './lib/googleLogin'
 import { getDeviceTimezone } from './lib/timezone'
 
-const API_BASE = Constants.expoConfig?.extra?.apiBaseUrl ?? ''
+// EXPO_PUBLIC_API_BASE_URL (inlined by Expo at bundle time) overrides the
+// app.json value, e.g. to point a dev build or web preview at a local backend.
+const API_BASE =
+  process.env.EXPO_PUBLIC_API_BASE_URL ?? Constants.expoConfig?.extra?.apiBaseUrl ?? ''
 
 export function apiBase() {
   return API_BASE

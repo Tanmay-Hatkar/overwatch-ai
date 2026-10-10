@@ -13,6 +13,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { sendChatMessage, getChatHistory } from '../api'
 import { color, font, radius, spacing } from '../theme'
+import ScreenHeader from '../components/ScreenHeader'
+import { Ionicons } from '@react-native-vector-icons/ionicons'
 
 const MAX_HISTORY_TURNS = 20
 const HISTORY_FOR_PROMPT = 10
@@ -109,13 +111,7 @@ export default function ChatScreen({ navigation }) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={insets.top}
     >
-      <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Pressable onPress={() => navigation.goBack()} hitSlop={12} style={styles.backButton}>
-          <Text style={styles.backGlyph}>‹</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>Chat</Text>
-        <View style={styles.backButton} />
-      </View>
+      <ScreenHeader title="Chat" onBack={() => navigation.goBack()} />
 
       {loadingHistory ? (
         <View style={styles.center}>
@@ -167,6 +163,8 @@ export default function ChatScreen({ navigation }) {
         />
         <Pressable
           testID="chat-send-button"
+          accessibilityRole="button"
+          accessibilityLabel="Send"
           onPress={() => sendMessage(input)}
           disabled={busy || !input.trim()}
           style={({ pressed }) => [
@@ -175,7 +173,15 @@ export default function ChatScreen({ navigation }) {
             pressed && styles.pressed,
           ]}
         >
-          <Text style={styles.sendButtonText}>{busy ? '…' : 'Send'}</Text>
+          {busy ? (
+            <ActivityIndicator size="small" color={color.textSecondary} />
+          ) : (
+            <Ionicons
+              name="arrow-up"
+              size={22}
+              color={input.trim() ? color.onAccent : color.textMuted}
+            />
+          )}
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -243,18 +249,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: color.background },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.7 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: color.border,
-  },
-  backButton: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
-  backGlyph: { color: color.textPrimary, fontSize: 28, fontWeight: '400', marginTop: -2 },
-  headerTitle: { color: color.textPrimary, fontSize: font.xl, fontWeight: '700' },
   listContent: { padding: spacing.lg, paddingBottom: spacing.xl, flexGrow: 1 },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
   emptyGlyph: { fontSize: 36, marginBottom: spacing.lg },
@@ -306,13 +300,12 @@ const styles = StyleSheet.create({
     fontSize: font.md,
   },
   sendButton: {
+    width: 44,
     height: 44,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.lg,
+    borderRadius: radius.pill,
     backgroundColor: color.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendButtonDisabled: { backgroundColor: color.surfaceRaised },
-  sendButtonText: { color: color.onAccent, fontSize: font.md, fontWeight: '700' },
 })

@@ -69,8 +69,8 @@ class UserRepository:
 
     def list_all_ids(self) -> list[UUID]:
         """
-        Return every user's id. Used by the ReminderScheduler to iterate
-        users and push each their own due reminders.
+        Return every user's id. Used by the StaleCheckScheduler to iterate
+        users and ask each about their own dormant plans.
         """
         rows = self._conn.execute("SELECT id FROM users").fetchall()
         return [UUID(row["id"]) for row in rows]

@@ -10,7 +10,7 @@ Production responsibilities (besides routing):
   - Configure logging (level + format) at startup
   - Mount CORS middleware for running the mobile app in a browser
     (`expo start --web`); the native app itself isn't subject to CORS
-  - Start the ReminderScheduler in the FastAPI lifespan
+  - Start the StaleCheckScheduler in the FastAPI lifespan
 """
 
 import logging
@@ -23,9 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import cors_origin_list, settings
 from app.database import init_db
-from app.routes import auth, briefings, calendar, chat, commitments, push, reflections
-from app.routes.push import get_push_service
-from app.services.reminder_scheduler import ReminderScheduler
+from app.routes import auth, briefings, calendar, chat, commitments, reflections
 from app.services.stale_check_scheduler import StaleCheckScheduler
 
 
@@ -48,9 +46,7 @@ def _configure_logging() -> None:
 _configure_logging()
 logger = logging.getLogger(__name__)
 
-# Module-level scheduler holders — lifespan populates them on startup,
-# accessor below returns the push scheduler for FastAPI dependencies.
-_scheduler: ReminderScheduler | None = None
+# Module-level scheduler holder — lifespan populates it on startup.
 _stale_scheduler: StaleCheckScheduler | None = None
 
 
@@ -61,12 +57,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     Responsibilities:
       1. Initialize the SQLite schema (idempotent — runs all migrations).
-      2. Start the ReminderScheduler background task, which polls
-         commitments and fires push notifications when items become due.
-      3. Start the StaleCheckScheduler background task, which asks (once,
+      2. Start the StaleCheckScheduler background task, which asks (once,
          ever) about open commitments that have gone quiet.
+
+    Due-time reminders are scheduled on the device by the mobile app
+    (expo-notifications + ring alarm), so there is no server-side
+    reminder scheduler.
     """
-    global _scheduler, _stale_scheduler
+    global _stale_scheduler
 
     logger.info(
         "Starting Overwatch backend (environment=%s, db=%s)",
@@ -75,27 +73,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     )
     init_db()
 
-    push_service = get_push_service()
-    if push_service.is_configured:
-        _scheduler = ReminderScheduler(push_service)
-        _scheduler.start()
-    else:
-        logger.info(
-            "VAPID not configured — skipping ReminderScheduler. "
-            "Set VAPID_PRIVATE_KEY to enable push notifications."
-        )
-
-    # Unlike ReminderScheduler, StaleCheckScheduler starts regardless of
-    # VAPID being configured — its "we asked" guarantee is fulfilled via a
-    # logged conversation turn even when push can't be sent, so there is no
-    # push-only reason to skip it.
-    _stale_scheduler = StaleCheckScheduler(push_service)
+    _stale_scheduler = StaleCheckScheduler()
     _stale_scheduler.start()
 
     yield
 
-    if _scheduler is not None:
-        await _scheduler.stop()
     if _stale_scheduler is not None:
         await _stale_scheduler.stop()
 
@@ -130,9 +112,6 @@ app.include_router(reflections.router)
 # Calendar — events from the configured CalendarProvider
 # (auto-detected: token.json present → Google, else Mock)
 app.include_router(calendar.router)
-
-# Push — subscribe/unsubscribe + test broadcast for Web Push notifications
-app.include_router(push.router)
 
 # Chat — conversational entry point. POST /chat handles message + history.
 app.include_router(chat.router)

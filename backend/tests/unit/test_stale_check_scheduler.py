@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
-
 from app.migrations import run_migrations
 from app.models.commitment import CommitmentCreate
 from app.repositories.commitment_repository import CommitmentRepository

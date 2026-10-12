@@ -85,13 +85,13 @@ def test_reflection_is_scoped_to_the_signed_in_user(db_connection, test_user) ->
     app.dependency_overrides[get_db] = _override_get_db
     try:
         client_a = TestClient(app)
-        client_a.cookies.set("ow_session", issue_session_token(test_user.id))
+        client_a.headers["Authorization"] = f"Bearer {issue_session_token(test_user.id)}"
 
         user_b = UserRepository(db_connection).create(
             google_id="g-other", email="other@example.com", name="Other User", picture=None
         )
         client_b = TestClient(app)
-        client_b.cookies.set("ow_session", issue_session_token(user_b.id))
+        client_b.headers["Authorization"] = f"Bearer {issue_session_token(user_b.id)}"
 
         with patch(LLM_PATCH_TARGET, return_value="User A's reflection."):
             response_a = client_a.get("/reflections/today")

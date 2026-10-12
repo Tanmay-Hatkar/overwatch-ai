@@ -8,8 +8,8 @@ The --reload flag auto-restarts the server on file changes (dev only).
 
 Production responsibilities (besides routing):
   - Configure logging (level + format) at startup
-  - Mount CORS middleware so the Vercel-hosted frontend can call this API
-    when they sit on different origins
+  - Mount CORS middleware for running the mobile app in a browser
+    (`expo start --web`); the native app itself isn't subject to CORS
   - Start the ReminderScheduler in the FastAPI lifespan
 """
 
@@ -107,22 +107,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — the frontend (Vercel) calls the backend (Railway) from a different
-# origin in production, so the browser enforces preflight checks. We allow the
-# origins listed in CORS_ORIGINS (comma-separated env var) PLUS the fixed
-# origins the Capacitor native app serves its webview from. The native app
-# uses bearer-token auth (no cookies), but its fetches are still cross-origin
-# to the backend, so its origin must be allowed. allow_credentials stays True
-# for the cookie-based web client, so no "*" wildcard.
-_CAPACITOR_ORIGINS = [
-    "https://localhost",      # Android (androidScheme: https, the default)
-    "http://localhost",       # Android (androidScheme: http)
-    "capacitor://localhost",  # iOS
-]
+# CORS — only relevant when the mobile app runs in a browser via Expo web
+# (local dev, screenshots). Native fetches aren't subject to CORS. Auth is a
+# bearer header, never a cookie, so credentials aren't needed.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origin_list() + _CAPACITOR_ORIGINS,
-    allow_credentials=True,
+    allow_origins=cors_origin_list(),
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )

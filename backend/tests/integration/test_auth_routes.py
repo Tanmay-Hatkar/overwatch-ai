@@ -8,7 +8,6 @@ at the service boundary (google_oauth_service.exchange_code_for_user).
 from unittest.mock import patch
 
 import pytest
-
 from app.models.user import GoogleUserInfo
 from app.services.jwt_service import issue_session_token, verify_session_token
 
@@ -36,9 +35,6 @@ def _configure_auth(monkeypatch: pytest.MonkeyPatch) -> None:
         "app.services.google_oauth_service.settings.backend_url",
         "http://localhost:8000",
     )
-    monkeypatch.setattr(
-        "app.routes.auth.settings.frontend_url", "http://localhost:5173"
-    )
     monkeypatch.setattr("app.routes.auth.settings.environment", "development")
 
 
@@ -64,17 +60,31 @@ def test_google_login_503_when_not_configured(
     assert response.status_code == 503
 
 
-def test_me_returns_401_without_cookie(client) -> None:
-    """No cookie → 401."""
+def test_me_returns_401_without_token(client) -> None:
+    """No Authorization header → 401."""
     response = client.get("/auth/me")
     assert response.status_code == 401
 
 
-def test_me_returns_401_with_garbage_cookie(client) -> None:
-    """A non-JWT cookie value is rejected."""
-    client.cookies.set("ow_session", "garbage")
-    response = client.get("/auth/me")
+def test_me_returns_401_with_garbage_token(client) -> None:
+    """A non-JWT bearer value is rejected."""
+    response = client.get("/auth/me", headers={"Authorization": "Bearer garbage"})
     assert response.status_code == 401
+
+
+def test_me_ignores_legacy_session_cookie(client, db_connection) -> None:
+    """The old web session cookie no longer authenticates — bearer only."""
+    from app.repositories.user_repository import UserRepository
+
+    user = UserRepository(db_connection).create("g", "c@example.com", "C", None)
+    client.cookies.set("ow_session", issue_session_token(user.id))
+    assert client.get("/auth/me").status_code == 401
+
+
+def test_google_login_accepts_legacy_native_param(client) -> None:
+    """The app still sends ?native=1; it must keep working (and is ignored)."""
+    response = client.get("/auth/google/login?native=1", follow_redirects=False)
+    assert response.status_code == 302
 
 
 def test_callback_with_state_mismatch_redirects_with_error(client) -> None:
@@ -86,7 +96,7 @@ def test_callback_with_state_mismatch_redirects_with_error(client) -> None:
         follow_redirects=False,
     )
     assert response.status_code == 302
-    assert "auth_error=state_mismatch" in response.headers["location"]
+    assert response.headers["location"] == "overwatch://auth?auth_error=state_mismatch"
 
 
 def test_callback_with_user_denied_redirects_with_error(client) -> None:
@@ -100,8 +110,15 @@ def test_callback_with_user_denied_redirects_with_error(client) -> None:
     assert "auth_error=google_denied" in response.headers["location"]
 
 
-def test_callback_success_sets_session_cookie_and_creates_user(client) -> None:
-    """Happy path: callback creates a new user and sets the session cookie."""
+def _token_from_deep_link(location: str) -> str:
+    """Pull the token out of an overwatch://auth?token=<jwt> redirect."""
+    prefix = "overwatch://auth?token="
+    assert location.startswith(prefix)
+    return location[len(prefix):]
+
+
+def test_callback_success_deep_links_token_and_creates_user(client) -> None:
+    """Happy path: callback creates a new user and deep-links a session token."""
     google_user = GoogleUserInfo(
         sub="new-google-sub",
         email="newbie@example.com",
@@ -122,13 +139,10 @@ def test_callback_success_sets_session_cookie_and_creates_user(client) -> None:
         )
 
     assert response.status_code == 302
-    assert response.headers["location"] == "http://localhost:5173/"
-    # Session cookie was set
-    assert "ow_session" in response.cookies
-    # And it's a valid JWT for some user UUID
-    token = response.cookies["ow_session"]
-    user_id = verify_session_token(token)
-    assert user_id is not None
+    token = _token_from_deep_link(response.headers["location"])
+    assert verify_session_token(token) is not None
+    # No session cookie — the token travels in the deep link only
+    assert "ow_session" not in response.cookies
 
 
 def test_callback_returning_user_does_not_duplicate(client, db_connection) -> None:
@@ -163,20 +177,19 @@ def test_callback_returning_user_does_not_duplicate(client, db_connection) -> No
         )
 
     assert response.status_code == 302
-    token = response.cookies["ow_session"]
+    token = _token_from_deep_link(response.headers["location"])
     assert verify_session_token(token) == existing.id
 
 
-def test_me_with_valid_cookie_returns_user(client, db_connection) -> None:
-    """A valid session cookie returns the matching user."""
+def test_me_with_valid_token_returns_user(client, db_connection) -> None:
+    """A valid bearer token returns the matching user."""
     from app.repositories.user_repository import UserRepository
 
     repo = UserRepository(db_connection)
     user = repo.create("g", "user@example.com", "User", None)
     token = issue_session_token(user.id)
 
-    client.cookies.set("ow_session", token)
-    response = client.get("/auth/me")
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     body = response.json()
     assert body["email"] == "user@example.com"
@@ -188,24 +201,12 @@ def test_me_returns_401_when_user_was_deleted(client) -> None:
     from uuid import uuid4
 
     token = issue_session_token(uuid4())
-    client.cookies.set("ow_session", token)
-    response = client.get("/auth/me")
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
 
 
-def test_logout_clears_session_cookie(client, db_connection) -> None:
-    """POST /auth/logout returns 204 and clears the cookie."""
-    from app.repositories.user_repository import UserRepository
-
-    repo = UserRepository(db_connection)
-    user = repo.create("g", "out@example.com", "Out", None)
-    token = issue_session_token(user.id)
-
-    client.cookies.set("ow_session", token)
+def test_logout_returns_204(client) -> None:
+    """POST /auth/logout is a stateless acknowledgement — 204, no body."""
     response = client.post("/auth/logout")
     assert response.status_code == 204
-    # Set-Cookie should be a delete (max-age=0 or expires in the past)
-    set_cookie = response.headers.get("set-cookie", "")
-    assert "ow_session=" in set_cookie
-    # The cookie value is now empty + an expiry in the past
-    assert 'ow_session=""' in set_cookie or "ow_session=;" in set_cookie or "Max-Age=0" in set_cookie
+    assert response.content == b""

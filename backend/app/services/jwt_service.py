@@ -1,5 +1,5 @@
 """
-jwt_service.py — JWT issuance and verification for session cookies.
+jwt_service.py — JWT issuance and verification for bearer session tokens.
 
 Wraps the `pyjwt` library with our own conventions:
   - Algorithm: HS256 (symmetric, signed with settings.session_secret)
@@ -43,7 +43,6 @@ def issue_session_token(user_id: UUID, max_age_days: int | None = None) -> str:
     Args:
         user_id: Our internal UUID. Stored in the `sub` claim.
         max_age_days: Override the default token lifetime (settings.session_max_age_days).
-            Used by /auth/me when refreshing a near-expiry token.
 
     Returns:
         The signed JWT as a compact string.
@@ -105,36 +104,3 @@ def verify_session_token(token: str) -> UUID:
         return UUID(sub)
     except ValueError as exc:
         raise JWTError("Session token sub is not a valid UUID") from exc
-
-
-def should_refresh(token: str) -> bool:
-    """
-    Return True if the token is valid AND within the refresh window
-    (settings.session_refresh_within_days of expiry).
-
-    Used by /auth/me to silently extend long-lived sessions without
-    forcing a re-login.
-
-    Args:
-        token: The compact JWT.
-
-    Returns:
-        True if the token should be reissued. False if it's still
-        comfortably valid (or invalid — in which case verify_session_token
-        would have already rejected the request).
-    """
-    try:
-        payload = jwt.decode(
-            token,
-            settings.session_secret,
-            algorithms=[_ALGORITHM],
-            options={"require": ["exp"]},
-        )
-    except jwt.InvalidTokenError:
-        return False
-
-    exp = datetime.fromtimestamp(payload["exp"], tz=UTC)
-    refresh_threshold = datetime.now(UTC) + timedelta(
-        days=settings.session_refresh_within_days
-    )
-    return exp <= refresh_threshold

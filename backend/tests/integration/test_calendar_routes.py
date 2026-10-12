@@ -18,10 +18,10 @@ from app.services.jwt_service import issue_session_token
 
 @pytest.fixture
 def authed_client(client: TestClient, db_connection) -> TestClient:
-    """A TestClient carrying a valid session cookie for a freshly-created user."""
+    """A TestClient carrying a valid bearer token for a freshly-created user."""
     repo = UserRepository(db_connection)
     user = repo.create("g-cal", "cal@example.com", "Cal User", None)
-    client.cookies.set("ow_session", issue_session_token(user.id))
+    client.headers["Authorization"] = f"Bearer {issue_session_token(user.id)}"
     return client
 
 

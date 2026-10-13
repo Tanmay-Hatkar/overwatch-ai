@@ -121,7 +121,7 @@ Every commit will auto-run:
 - **ruff format** — Python formatter (auto-fixes formatting)
 - **mypy** — type checker
 - **pytest** (fast subset) — unit tests
-- **prettier** — frontend formatter
+- **eslint** — mobile linter (`cd mobile && npm run lint`, also in CI)
 
 If any fail, the commit is blocked.
 

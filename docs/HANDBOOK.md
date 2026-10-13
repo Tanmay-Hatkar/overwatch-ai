@@ -40,40 +40,38 @@ After that, you're not just "familiar" — you can confidently add a feature.
 
 ```
                             ┌──────────────────────────────┐
-                            │      User on phone/laptop     │
+                            │        User on Android        │
                             └──────────────┬───────────────┘
                                            │
-                                  Browser / installed PWA
-                                           │
        ┌───────────────────────────────────▼────────────────────────────────────┐
-       │                          Frontend (React + Vite)                       │
+       │                 Mobile app (React Native + Expo, mobile/)              │
        │                                                                        │
-       │   App.jsx ─┬─ BriefingCard ─ ReflectionCard                             │
-       │            ├─ CommitmentList  (the Todos — no groups, no inline edit   │
-       │            │                   of due_at; chat is the only capture/    │
-       │            │                   modify channel, ADR-0023)                │
-       │            ├─ ChatBar  (the conversational surface)                     │
-       │            ├─ PushSetup                                                 │
-       │            └─ SettingsPanel  (incl. optional Calendar connect, ADR-0022)│
+       │   App.js ─┬─ TodoListScreen   (the Todos — sections derived from due   │
+       │           │                    date + optional section tag)            │
+       │           ├─ ChatScreen       (the conversational surface: capture,    │
+       │           │                    edit, clarify chips, stale check-ins)   │
+       │           ├─ BriefingScreen   ReflectionScreen                         │
+       │           └─ LoginScreen      (Google sign-in via system browser)      │
        │                                                                        │
-       │   sw.js  (Service Worker — push events even when tab is closed)        │
+       │   On-device: expo-notifications (reminders + stale check-in),          │
+       │   modules/ring-alarm (full-screen escalation), modules/widget          │
        └───────────────────────────────────┬────────────────────────────────────┘
                                            │
-                              HTTP/JSON  (REST endpoints)
+                     HTTPS/JSON  (REST, Authorization: Bearer <jwt>)
                                            │
        ┌───────────────────────────────────▼────────────────────────────────────┐
        │                       Backend (FastAPI, Python 3.12)                   │
        │                                                                        │
        │   Routes layer    →  /chat /commitments /briefings /reflections        │
-       │   (app/routes/)      /calendar /push /auth /health                     │
+       │   (app/routes/)      /calendar /auth /health                           │
        │                                                                        │
-       │   Services layer  →  ChatService    BriefingService    PushService     │
+       │   Services layer  →  ChatService    BriefingService                    │
        │   (app/services/)    CommitmentService  CalendarService                │
-       │                      CommitmentParserService  ReminderScheduler        │
-       │                      StaleCheckScheduler  ReflectionService            │
+       │                      CommitmentParserService  ReflectionService        │
+       │                      StaleCheckScheduler                               │
        │                                                                        │
        │   Repositories   →  CommitmentRepository    BriefingRepository         │
-       │   (app/repos/)      PushSubscriptionRepository                         │
+       │   (app/repos/)      ConversationRepository  UserRepository             │
        │                                                                        │
        │   Providers      →  GoogleCalendarProvider     MockCalendarProvider    │
        │   (app/providers/)                                                     │
@@ -83,8 +81,11 @@ After that, you're not just "familiar" — you can confidently add a feature.
        └────────┬──────────────────────┬───────────────────────┬────────────────┘
                 │                      │                       │
         SQLite (data/overwatch.db)  Ollama/Groq/OpenAI    Google Calendar API
-                                    (LLM fallback chain)   + Gmail (read-only)
+                                    (LLM fallback chain)   (read-only, dormant)
 ```
+
+The web SPA and its Capacitor wrapper were removed in ADR-0024 (tag
+`pre-mobile-only` has them).
 
 **The rule:** A layer only talks to the layer directly below it. Routes never touch repositories; they go through services. Services never call LLMs or Google directly; they go through agents/providers.
 
@@ -92,10 +93,10 @@ After that, you're not just "familiar" — you can confidently add a feature.
 
 ## 4. One request, end-to-end
 
-A walk-through of what happens when you type **"remind me to call mom at 7"** into the ChatBar.
+A walk-through of what happens when you type **"remind me to call mom at 7"** into the chat.
 
-### Step 1 — Browser
-[`ChatBar.jsx`](../frontend/src/components/ChatBar.jsx) packages your message + last 10 turns of history and POSTs to `/chat`.
+### Step 1 — App
+[`ChatScreen.js`](../mobile/src/screens/ChatScreen.js) sends your message (with the device timezone) through [`api.js`](../mobile/src/api.js), which POSTs to `/chat` with the stored bearer token.
 
 ### Step 2 — Route
 [`routes/chat.py`](../backend/app/routes/chat.py) receives the request, validates the body with the Pydantic `ChatRequest` model, and hands it to `ChatService.handle()`.
@@ -139,7 +140,7 @@ Because `intent === "add_commitment"`, the service calls `CommitmentService.crea
 [`repositories/commitment_repository.py`](../backend/app/repositories/commitment_repository.py) executes a parameterized `INSERT` into the `commitments` table in SQLite.
 
 ### Step 7 — Response
-The service returns a `ChatResponse(reply, intent, commitment)` to the route. FastAPI serializes it to JSON. The browser receives:
+The service returns a `ChatResponse(reply, intent, commitment)` to the route. FastAPI serializes it to JSON. The app receives:
 
 ```json
 {
@@ -150,12 +151,12 @@ The service returns a `ChatResponse(reply, intent, commitment)` to the route. Fa
 ```
 
 ### Step 8 — UI update
-ChatBar appends both turns to history (persists to `localStorage`), fires `onAction()` which the parent `App.jsx` listens to and refreshes the commitments list / calendar / briefing. A toast pops up: *"Added: Call mom."*
+ChatScreen appends both turns and shows the created commitment inline. When you return to the Todos screen it refetches `/commitments`, and [`notifications.js`](../mobile/src/lib/notifications.js) reconciles on-device reminders against the new list.
 
 ### Step 9 — Later, at 7pm
-The **ReminderScheduler** (a background asyncio task started in [`main.py`](../backend/app/main.py) lifespan) ticks every 60 seconds. It queries for commitments whose `due_at` just passed and aren't already notified. For each, it calls `PushService.broadcast(...)` which signs a payload with the VAPID private key and POSTs it to every stored push endpoint.
+Nothing on the server fires. The reminder was scheduled **on the phone** with `expo-notifications`, so it fires even if the app is closed or offline. If you ignore it, [`ringAlarm.js`](../mobile/src/lib/ringAlarm.js) escalates to a full-screen ringing alarm (ADR-0019) via the native `modules/ring-alarm`.
 
-The browser's service worker ([`sw.js`](../frontend/public/sw.js)) receives the push event — **even if the tab is closed** — and shows a system notification. Click it → focuses the Overwatch tab.
+The only server-side background job is the **StaleCheckScheduler**: once ever per commitment, it logs a "still the plan?" assistant turn for plans that have gone quiet (ADR-0017). The app schedules a matching local notification and shows the turn, with reply chips, in chat.
 
 That's one request, end to end.
 
@@ -170,19 +171,21 @@ Every slice is one vertical feature, end to end (UI + API + DB + tests). Every s
 | 1 | Commitment CRUD | ✅ Shipped | `commitment_service.py`, `routes/commitments.py` | 0001 |
 | 2 | LLM fallback chain | ✅ Shipped | `agents/orchestrator.py` | 0002 |
 | 3 | Natural-language commitment parser | ✅ Shipped | `commitment_parser_service.py`, `prompts/commitment_parser.py` | 0003 |
-| 4 | Reminder scheduling (polling) | ✅ Shipped | `services/reminder_scheduler.py` | 0004 |
+| 4 | Reminder scheduling (polling) | ❌ Replaced | on-device scheduling in `mobile/src/lib/notifications.js` | 0004, 0024 |
 | 5 | Morning briefing + cache | ✅ Shipped | `briefing_service.py`, `prompts/morning_briefing.py` | 0005 |
 | 6 | Stats (completion counts, streak, 7-day series) | ❌ Built, then removed | contradicted "no streak tyranny" (PRD §5) | 0023 |
 | 7a | Calendar provider abstraction | ✅ Shipped | `providers/calendar_provider.py`, `mock_calendar_provider.py` | 0006 |
 | 7b | Google Calendar real provider | ✅ Shipped | `providers/google_calendar_provider.py` | 0006 |
-| 8 | Web Push notifications (VAPID, SW push event) | ✅ Shipped | `push_service.py`, `routes/push.py`, `sw.js` | 0007 |
+| 8 | Web Push notifications (VAPID, SW push event) | ❌ Built, then removed | web client gone; reminders are on-device | 0007, 0024 |
 | 9 | Calendar grid UI | ❌ Built, then removed | demoted to Settings-only connect (no UI) | 0022 |
-| 10 | Conversational chat (single LLM intent + reply) | ✅ Shipped | `chat_service.py`, `prompts/chat.py`, `ChatBar.jsx` | 0008 |
-| 11 | Production-readiness + deploy | ✅ Shipped | Railway (backend) + Vercel (frontend) | — |
-| 12 | Voice input/output (web + native Android) | ✅ Shipped | `speech.js`, `nativeSpeech.js`, `nativeTts.js` | 0012, 0016 |
+| 10 | Conversational chat (single LLM intent + reply) | ✅ Shipped | `chat_service.py`, `prompts/chat.py`, `ChatScreen.js` | 0008 |
+| 11 | Production-readiness + deploy | ✅ Shipped | Railway (backend) | — |
+| 12 | Voice input/output (web + native Android) | ⚠️ Removed with the web client; not yet in `mobile/` | was `speech.js`, `nativeTts.js` | 0012, 0016, 0024 |
 | 13 | Multi-tenancy / auth | ✅ Shipped, dormant for now | `auth.py`, per-user scoping | 0009, 0013 |
 | 14 | Recurring commitments, stale-plan check-in, evening reflection, ring-alarm escalation, home-screen widget | ✅ Shipped | see ADR list | 0015, 0017–0020 |
 | 15 | v1 refocus — mobile-first, cut groups/reschedule/stats/dormant forms | ✅ Shipped | this slice | 0022, 0023 |
+| 16 | Mobile app (RN/Expo): AI-first capture, ring escalation, widget | ✅ Shipped | `mobile/` | 0019, 0020 |
+| 17 | Mobile-only client: remove web SPA, Capacitor, cookie auth, Web Push | ✅ Shipped | — | 0024 |
 
 This table stops tracking new slices in detail as of #15 — for anything
 shipped after this, the ADR list in `docs/adr/` is the source of truth,
@@ -207,15 +210,18 @@ python -m uvicorn app.main:app --reload --port 8000
 
 Hit `http://localhost:8000/health` — should return `{"status":"ok"}`.
 
-### Frontend
+### Mobile
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd mobile
+npm ci
+npx expo run:android      # dev build on a device/emulator (needs the Android SDK)
+npx expo start --web      # quick browser preview; native modules are stubbed
 ```
 
-Open `http://localhost:5173`. Vite's proxy forwards `/commitments`, `/chat`, etc. to the backend on `:8000` — same-origin from the browser's perspective, so no CORS friction during dev.
+The app talks to `expo.extra.apiBaseUrl` in `mobile/app.json` (production
+Railway by default). Point it at `http://<your-LAN-IP>:8000` to use a local
+backend.
 
 ### Tests
 
@@ -223,8 +229,8 @@ Open `http://localhost:5173`. Vite's proxy forwards `/commitments`, `/chat`, etc
 # Backend
 cd backend && pytest
 
-# Frontend (Vitest installed, no tests written yet)
-cd frontend && npx vitest
+# Mobile (Jest + ESLint, same as CI)
+cd mobile && npm test && npm run lint
 ```
 
 ---
@@ -239,7 +245,7 @@ Follow the vertical-slice playbook (ADR-0001 is the canonical version):
 4. **Service.** Add to `app/services/`. This is where business logic lives. Constructor takes the repository.
 5. **Route.** Add to `app/routes/`. Thin — just validates input, calls service, returns response. Wire it up in `app/main.py`.
 6. **Tests.** Unit tests for the service (mock the repo). Integration tests for the route (use the `client` fixture from `conftest.py`).
-7. **Frontend.** Add the component under `frontend/src/components/`. Add an API helper to `src/api.js`. Wire into `App.jsx`.
+7. **Mobile.** Add a screen under `mobile/src/screens/` or a component under `mobile/src/components/`. Add an API helper to `mobile/src/api.js`. Register screens in `mobile/App.js`.
 8. **ADR.** If the decision involved a non-obvious trade-off, write one. Use [`docs/adr/template.md`](adr/template.md).
 
 ### Where to look when…
@@ -247,12 +253,12 @@ Follow the vertical-slice playbook (ADR-0001 is the canonical version):
 | Task | Start here |
 |---|---|
 | Add a new LLM-touching feature | [`agents/orchestrator.py`](../backend/app/agents/orchestrator.py) + a new prompt in [`prompts/`](../backend/app/prompts/) |
-| Add a new background job | [`scheduler/jobs.py`](../backend/app/services/reminder_scheduler.py) pattern + wire in `main.py` lifespan |
+| Add a new background job | [`stale_check_scheduler.py`](../backend/app/services/stale_check_scheduler.py) pattern + wire in `main.py` lifespan |
 | Add a new external integration | New `providers/X_provider.py` implementing the existing abstract base |
 | Change how a commitment is stored | [`models/commitment.py`](../backend/app/models/commitment.py) + `commitment_repository.py` + migration in `init_db()` |
 | Add a new chat intent | [`prompts/chat.py`](../backend/app/prompts/chat.py) + intent handler in `chat_service.py` |
-| Send a different kind of notification | [`push_service.py`](../backend/app/services/push_service.py) — `PushPayload` is the shape |
-| Add a new frontend page/route | Currently single-page. Add a new component, conditionally render in `App.jsx`. Add React Router only when there's a real second page. |
+| Send a different kind of notification | [`mobile/src/lib/notifications.js`](../mobile/src/lib/notifications.js) — on-device, reconciled against the commitment list |
+| Add a new screen | New file in `mobile/src/screens/`, register it in the stack in `mobile/App.js` |
 
 ---
 
@@ -280,7 +286,6 @@ If you're tempted to skip one, write an ADR explaining why instead.
 - **Intent** — The LLM-classified category of a chat message: `add_commitment`, `query`, or `general`.
 - **Vertical slice** — One end-to-end feature (UI + API + DB + tests). Methodology from ADR-0001.
 - **ADR** — Architectural Decision Record. One file per major decision. Always lists alternatives considered.
-- **VAPID** — Voluntary Application Server Identification. The crypto keypair that authenticates push payloads to the user's browser push service.
 - **Service Worker** — A JS script that runs in the background, independent of any browser tab. The only way to receive Web Push events when the tab is closed.
 - **Provider** — An adapter for an external service (calendar, LLM). Lives behind an abstract base so the rest of the code is agnostic.
 
@@ -290,6 +295,6 @@ If you're tempted to skip one, write an ADR explaining why instead.
 
 If you remember one thing from this handbook:
 
-> **Overwatch is a layered Python backend + React frontend, where every external dependency (LLM, calendar, push) lives behind a provider, every feature is shipped as a vertical slice, and every non-obvious decision has an ADR explaining the alternatives we rejected.**
+> **Overwatch is a layered Python backend + React Native mobile app, where every external dependency (LLM, calendar) lives behind a provider, every feature is shipped as a vertical slice, and every non-obvious decision has an ADR explaining the alternatives we rejected.**
 
 That's the whole shape.

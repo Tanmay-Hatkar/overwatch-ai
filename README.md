@@ -4,7 +4,7 @@ A conversational AI that captures the commitments you make to yourself in natura
 
 ## Status
 
-🚧 Early development. Building toward a personal-use MVP.
+🚧 Personal-use MVP in active development: Android app + FastAPI backend.
 
 ## The problem
 
@@ -21,14 +21,24 @@ See [`docs/PRD.md`](docs/PRD.md) for the full product vision.
 ## Tech stack
 
 - **Backend:** Python 3.12, FastAPI
-- **Frontend:** React + Vite
-- **Database:** Postgres (Supabase) + SQLite (local dev)
+- **Mobile app:** React Native + Expo (Android) — the only client
+- **Database:** SQLite (Railway volume in production, local file in dev)
 - **LLM:** OpenAI → Groq → Ollama fallback chain
-- **Calendar integration:** Google Calendar API
 
 ## Getting started
 
-_Setup instructions will be added once slice 1 is complete._
+See [`docs/HANDBOOK.md`](docs/HANDBOOK.md) §6 for full setup. Short version:
+
+```bash
+# Backend (Python 3.12)
+cd backend && python -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]" && cp .env.example .env   # fill in keys
+uvicorn app.main:app --reload --port 8000
+
+# Mobile
+cd mobile && npm ci
+npx expo run:android
+```
 
 ## Documentation
 

@@ -89,6 +89,56 @@ export async function deleteCommitment(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Weekly goals (ADR-0026) — every call carries the device timezone, since
+// "this week" is the user's local Monday-to-Sunday.
+// ---------------------------------------------------------------------------
+
+function tzQuery(timezone = getDeviceTimezone()) {
+  return timezone ? `?timezone=${encodeURIComponent(timezone)}` : ''
+}
+
+export async function listGoals() {
+  return apiFetch(`/goals${tzQuery()}`)
+}
+
+export async function createGoal({ text, target_count }) {
+  return apiFetch(`/goals${tzQuery()}`, {
+    method: 'POST',
+    body: JSON.stringify({ text, target_count }),
+  })
+}
+
+export async function updateGoal(id, changes) {
+  return apiFetch(`/goals/${id}${tzQuery()}`, {
+    method: 'PATCH',
+    body: JSON.stringify(changes),
+  })
+}
+
+export async function deleteGoal(id) {
+  return apiFetch(`/goals/${id}`, { method: 'DELETE' })
+}
+
+export async function logGoal(id, amount = 1) {
+  return apiFetch(`/goals/${id}/log${tzQuery()}`, {
+    method: 'POST',
+    body: JSON.stringify({ amount }),
+  })
+}
+
+export async function undoGoalLog(id) {
+  return apiFetch(`/goals/${id}/log${tzQuery()}`, { method: 'DELETE' })
+}
+
+/** decision: 'keep_going' | 'call_it_good' | null (take it back). */
+export async function decideGoalWeek(id, decision) {
+  return apiFetch(`/goals/${id}/week-decision${tzQuery()}`, {
+    method: 'POST',
+    body: JSON.stringify({ decision }),
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Chat (AI capture — the primary way commitments should be created; see
 // frontend/src/components/ChatBar.jsx for the reference web implementation
 // this mirrors, incl. clarify_kind/clarify_options for tap-only chips)

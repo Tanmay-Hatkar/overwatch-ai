@@ -89,6 +89,7 @@ export default function ChatScreen({ navigation }) {
         clarifyOptions: result.intent === 'clarify' ? result.clarify_options : undefined,
         commitmentCreated: result.intent === 'add_commitment' && result.commitment ? result.commitment.text : undefined,
         commitmentUpdated: result.intent === 'modify_commitment' && result.commitment ? result.commitment.text : undefined,
+        goalTag: goalTagFor(result),
       }
       setHistory((prev) => [...prev, assistantTurn].slice(-MAX_HISTORY_TURNS))
     } catch (err) {
@@ -189,6 +190,15 @@ export default function ChatScreen({ navigation }) {
 }
 
 let idCounter = 0
+// Small confirmation under the reply when chat changed a weekly goal (ADR-0026).
+function goalTagFor(result) {
+  if (!result.goal) return undefined
+  const { text, done_this_week, target_count } = result.goal
+  if (result.intent === 'add_goal') return `✓ Weekly goal: ${text} · ${target_count}/week`
+  if (result.intent === 'log_goal') return `✓ ${text}: ${done_this_week} of ${target_count} this week`
+  return undefined
+}
+
 function makeId() {
   idCounter += 1
   return `t${Date.now()}-${idCounter}`
@@ -219,6 +229,7 @@ function ChatBubble({ turn, isLatest, onChipTap, disabled }) {
       {turn.commitmentCreated && (
         <Text style={styles.createdTag}>✓ Added: {turn.commitmentCreated}</Text>
       )}
+      {turn.goalTag && <Text style={styles.createdTag}>{turn.goalTag}</Text>}
       {turn.commitmentUpdated && (
         <Text style={styles.createdTag}>✏️ Updated: {turn.commitmentUpdated}</Text>
       )}

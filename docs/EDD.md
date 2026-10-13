@@ -58,6 +58,24 @@ Other entities likely:
 - `ExternalEvent` (cached Google Calendar events)
 - `Reflection` (evening review records)
 
+### Goal (weekly rate goal, ADR-0026)
+
+The PRD §4.4 shape of a commitment: "do X, N times, this week".
+
+- `goals` — `id, user_id, text, target_count, status (active|archived),
+  decision (keep_going|call_it_good|NULL), decision_week (Monday, user-local),
+  created_at, updated_at`
+- `goal_logs` — `id, goal_id, user_id, amount, logged_at (UTC)`
+
+Progress is computed on read, never stored: the sum of `goal_logs.amount`
+inside the user's current week, [Monday 00:00, next Monday 00:00) in their
+timezone. The API returns it with `done_this_week`, `remaining`,
+`days_left` and a `state` of `in_progress | check_in | met | settled`.
+
+`GoalRepository` (SQL only) → `GoalService` (week arithmetic, state) →
+`routes/goals.py`. `ChatService` takes an optional `GoalService` for the
+`add_goal` / `log_goal` intents.
+
 ## 4. API design
 
 _To be filled during slice 1 (Todos), then expanded per slice._
@@ -68,6 +86,18 @@ Conventions:
 - Standard HTTP status codes (200/201/204/400/404/409/503)
 - JSON request/response bodies via Pydantic models
 - Versioning: prefix `/v1/` once the first external user appears (not before)
+
+Goals (ADR-0026), all taking `?timezone=<IANA name>`:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/goals` | active goals + this week's progress |
+| POST | `/goals` | create `{text, target_count}` |
+| PATCH | `/goals/{id}` | rename / re-target / archive |
+| DELETE | `/goals/{id}` | delete goal and logs |
+| POST | `/goals/{id}/log` | add progress `{amount=1}` |
+| DELETE | `/goals/{id}/log` | undo this week's latest log |
+| POST | `/goals/{id}/week-decision` | `{decision: keep_going \| call_it_good \| null}` |
 
 ## 5. LLM strategy
 

@@ -26,6 +26,9 @@ import { syncCommitmentReminders } from '../lib/notifications'
 import { reconcileRingAlarms } from '../lib/ringAlarm'
 import TodoItem from '../components/TodoItem'
 import UpNextCard from '../components/UpNextCard'
+import WeeklyGoals from '../components/WeeklyGoals'
+import GoalModal from '../components/GoalModal'
+import { useWeeklyGoals } from '../lib/useWeeklyGoals'
 import AddEditTodoModal from '../components/AddEditTodoModal'
 import ConfirmModal from '../components/ConfirmModal'
 import { color, font, radius, spacing } from '../theme'
@@ -46,6 +49,9 @@ export default function TodoListScreen({ navigation }) {
   const [activeSection, setActiveSection] = useState(null) // null = "All"
   const [pendingDelete, setPendingDelete] = useState(null) // commitment awaiting delete confirmation
   const [signOutVisible, setSignOutVisible] = useState(false)
+  const weekly = useWeeklyGoals()
+  const [goalSheet, setGoalSheet] = useState(null) // { goal } — goal null = new; null = closed
+  const [pendingGoalDelete, setPendingGoalDelete] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -65,15 +71,28 @@ export default function TodoListScreen({ navigation }) {
 
   // Refetch every time this screen regains focus, not just on mount --
   // commitments created via ChatScreen need to show up on the way back.
+  const loadGoals = weekly.load
   useFocusEffect(
     useCallback(() => {
       load()
-    }, [load]),
+      loadGoals()
+    }, [load, loadGoals]),
   )
 
   async function handleRefresh() {
     setRefreshing(true)
-    await load()
+    await Promise.all([load(), loadGoals()])
+  }
+
+  async function handleGoalSave(fields) {
+    const existing = goalSheet?.goal ?? null
+    setGoalSheet(null)
+    await weekly.save(existing, fields)
+  }
+
+  function handleGoalDelete(goal) {
+    setGoalSheet(null)
+    setPendingGoalDelete(goal)
   }
 
   async function handleToggle(commitment) {
@@ -174,6 +193,15 @@ export default function TodoListScreen({ navigation }) {
           onDone={handleDone}
           onMove={openEdit}
           onTalk={() => navigation.navigate('Chat')}
+        />
+      )}
+      {!activeSection && (
+        <WeeklyGoals
+          goals={weekly.goals}
+          onLog={weekly.log}
+          onOpen={(goal) => setGoalSheet({ goal })}
+          onDecide={weekly.decide}
+          onAdd={() => setGoalSheet({ goal: null })}
         />
       )}
       {knownSections.length > 0 && (
@@ -282,6 +310,32 @@ export default function TodoListScreen({ navigation }) {
         destructive
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+
+      <GoalModal
+        visible={!!goalSheet}
+        initial={goalSheet?.goal ?? null}
+        onSave={handleGoalSave}
+        onCancel={() => setGoalSheet(null)}
+        onUndo={(goal) => {
+          setGoalSheet(null)
+          weekly.undo(goal)
+        }}
+        onDelete={handleGoalDelete}
+      />
+
+      <ConfirmModal
+        visible={!!pendingGoalDelete}
+        title="Delete goal?"
+        message={pendingGoalDelete?.text}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {
+          const goal = pendingGoalDelete
+          setPendingGoalDelete(null)
+          if (goal) weekly.remove(goal)
+        }}
+        onCancel={() => setPendingGoalDelete(null)}
       />
 
       <ConfirmModal

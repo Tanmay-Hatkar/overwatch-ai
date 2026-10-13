@@ -30,11 +30,14 @@ import { colorForSection } from '../lib/sectionColor'
  * `knownSections` (derived from existing todos) is how "reuse it" works,
  * no separate section-management screen.
  *
+ * When editing, a Delete action sits below Save/Cancel (`onDelete`) —
+ * delete lives here rather than as an × on every list row.
+ *
  * Wrapped in KeyboardAvoidingView + a ScrollView so the on-screen keyboard
  * doesn't cover the Save button or section row when the text input is
  * focused — the sheet scrolls instead of being pushed off-screen.
  */
-export default function AddEditTodoModal({ visible, initial, knownSections, onSave, onCancel }) {
+export default function AddEditTodoModal({ visible, initial, knownSections, onSave, onCancel, onDelete }) {
   const [text, setText] = useState('')
   const [hasDueDate, setHasDueDate] = useState(false)
   const [dueAt, setDueAt] = useState(new Date())
@@ -230,6 +233,17 @@ export default function AddEditTodoModal({ visible, initial, knownSections, onSa
                   <Text style={styles.saveText}>Save</Text>
                 </Pressable>
               </View>
+
+              {initial && onDelete && (
+                <Pressable
+                  style={({ pressed }) => [styles.deleteBtn, pressed && styles.pressed]}
+                  onPress={() => onDelete(initial)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Delete ${initial.text}`}
+                >
+                  <Text style={styles.deleteText}>Delete todo</Text>
+                </Pressable>
+              )}
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -325,5 +339,7 @@ const styles = StyleSheet.create({
   cancelText: { color: color.textSecondary, fontSize: font.md, fontWeight: '600' },
   saveBtn: { backgroundColor: color.accent },
   saveBtnDisabled: { opacity: 0.4 },
+  deleteBtn: { alignSelf: 'center', marginTop: spacing.lg, paddingVertical: spacing.sm, paddingHorizontal: spacing.lg },
+  deleteText: { color: color.danger, fontSize: font.md, fontWeight: '600' },
   saveText: { color: color.onAccent, fontSize: font.md, fontWeight: '700' },
 })

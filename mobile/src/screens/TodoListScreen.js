@@ -4,7 +4,6 @@ import {
   Alert,
   Pressable,
   RefreshControl,
-  ScrollView,
   SectionList,
   StyleSheet,
   Text,
@@ -12,6 +11,7 @@ import {
 } from 'react-native'
 import { useFocusEffect } from '@react-navigation/native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Ionicons } from '@react-native-vector-icons/ionicons'
 import {
   createCommitment,
   deleteCommitment,
@@ -20,13 +20,20 @@ import {
 } from '../api'
 import { useAuth } from '../contexts/AuthContext'
 import { sectionizeCommitments } from '../lib/sections'
+import { firstNameOf, greetingFor, pickUpNext } from '../lib/focus'
 import { colorForSection } from '../lib/sectionColor'
 import { syncCommitmentReminders } from '../lib/notifications'
 import { reconcileRingAlarms } from '../lib/ringAlarm'
 import TodoItem from '../components/TodoItem'
+import UpNextCard from '../components/UpNextCard'
 import AddEditTodoModal from '../components/AddEditTodoModal'
 import ConfirmModal from '../components/ConfirmModal'
 import { color, font, radius, spacing } from '../theme'
+
+// Display titles for sectionizeCommitments()'s buckets. "Overdue" is the
+// internal bucket name; on screen it's framed as a neutral fact, not a
+// failure (PRD §5 principle 3).
+const SECTION_TITLES = { Overdue: 'From earlier' }
 
 export default function TodoListScreen({ navigation }) {
   const { user, logout } = useAuth()
@@ -83,7 +90,12 @@ export default function TodoListScreen({ navigation }) {
   }
 
   function handleDelete(commitment) {
+    setModalVisible(false)
     setPendingDelete(commitment)
+  }
+
+  async function handleDone(commitment) {
+    if (commitment.status !== 'done') await handleToggle(commitment)
   }
 
   async function confirmDelete() {
@@ -131,19 +143,6 @@ export default function TodoListScreen({ navigation }) {
     return Array.from(set).sort()
   }, [commitments])
 
-  // done/total per section, purely for the chip label (e.g. "Job Hunt · 2/5") —
-  // a display computation over the existing flat tag, not a new entity.
-  const sectionStats = useMemo(() => {
-    const stats = {}
-    for (const name of knownSections) stats[name] = { done: 0, total: 0 }
-    for (const c of commitments) {
-      if (!c.group_name || !stats[c.group_name]) continue
-      stats[c.group_name].total += 1
-      if (c.status === 'done') stats[c.group_name].done += 1
-    }
-    return stats
-  }, [commitments, knownSections])
-
   const bySection = activeSection
     ? commitments.filter((c) => c.group_name === activeSection)
     : commitments
@@ -152,7 +151,11 @@ export default function TodoListScreen({ navigation }) {
   const sections = sectionizeCommitments(open)
   if (done.length > 0) sections.push({ title: 'Done', data: done })
 
-  const initial = (user?.email || '?').trim().charAt(0).toUpperCase()
+  const firstName = firstNameOf(user)
+  const initial = (firstName || '?').charAt(0).toUpperCase()
+  const now = new Date()
+  const focus = activeSection ? null : pickUpNext(commitments, now)
+  const today = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
 
   if (loading) {
     return (
@@ -162,96 +165,105 @@ export default function TodoListScreen({ navigation }) {
     )
   }
 
+  const listHeader = (
+    <View>
+      {focus && (
+        <UpNextCard
+          focus={focus}
+          now={now}
+          onDone={handleDone}
+          onMove={openEdit}
+          onTalk={() => navigation.navigate('Chat')}
+        />
+      )}
+      {knownSections.length > 0 && (
+        <View style={styles.chipRow}>
+          <SectionChip label="All" active={activeSection === null} onPress={() => setActiveSection(null)} />
+          {knownSections.map((name) => (
+            <SectionChip
+              key={name}
+              label={name}
+              dotColor={colorForSection(name)}
+              active={activeSection === name}
+              onPress={() => setActiveSection(name)}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  )
+
   return (
     <View style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Text style={styles.headerTitle}>Todos</Text>
+      <View style={[styles.header, { paddingTop: insets.top + spacing.lg }]}>
+        <View style={styles.headerText}>
+          <Text style={styles.date}>{today}</Text>
+          <Text style={styles.greeting} numberOfLines={2}>
+            {greetingFor(now)}
+            {firstName ? `, ${firstName}` : ''}
+          </Text>
+        </View>
         <View style={styles.headerActions}>
-          <Pressable
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            onPress={() => navigation.navigate('Briefing')}
-            hitSlop={8}
-          >
-            <Text style={styles.iconButtonText}>☀️</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            onPress={() => navigation.navigate('Reflection')}
-            hitSlop={8}
-          >
-            <Text style={styles.iconButtonText}>🌙</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.chatButton, pressed && styles.pressed]}
-            onPress={() => navigation.navigate('Chat')}
-            hitSlop={8}
-          >
-            <Text style={styles.chatButtonText}>💬 Chat</Text>
-          </Pressable>
+          <HeaderIcon icon="partly-sunny-outline" label="Morning brief" onPress={() => navigation.navigate('Briefing')} />
+          <HeaderIcon icon="moon-outline" label="Evening reflection" onPress={() => navigation.navigate('Reflection')} />
           <Pressable
             style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
             onPress={() => setSignOutVisible(true)}
             hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Account"
           >
             <Text style={styles.avatarText}>{initial}</Text>
           </Pressable>
         </View>
       </View>
 
-      {knownSections.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.chipRow}
-          contentContainerStyle={styles.chipRowContent}
-        >
-          <SectionChip label="All" active={activeSection === null} onPress={() => setActiveSection(null)} />
-          {knownSections.map((name) => (
-            <SectionChip
-              key={name}
-              label={name}
-              progress={sectionStats[name]}
-              dotColor={colorForSection(name)}
-              active={activeSection === name}
-              onPress={() => setActiveSection(name)}
-            />
-          ))}
-        </ScrollView>
-      )}
-
       <SectionList
         sections={sections}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <TodoItem
-            commitment={item}
-            onToggle={handleToggle}
-            onPress={openEdit}
-            onDelete={handleDelete}
-          />
-        )}
+        ListHeaderComponent={listHeader}
+        stickySectionHeadersEnabled={false}
+        renderItem={({ item }) => <TodoItem commitment={item} onToggle={handleToggle} onPress={openEdit} />}
         renderSectionHeader={({ section }) => (
-          <Text style={styles.sectionHeader}>
-            {section.title} ({section.data.length})
-          </Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionHeader}>{SECTION_TITLES[section.title] || section.title}</Text>
+            <Text style={styles.sectionCount}>{section.data.length}</Text>
+          </View>
         )}
-        contentContainerStyle={[styles.listContent, { paddingBottom: 120 + insets.bottom }]}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 110 + insets.bottom }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.accent} />}
         ListEmptyComponent={
           <View style={styles.emptyWrap}>
-            <Text style={styles.emptyGlyph}>✓</Text>
-            <Text style={styles.empty}>Nothing yet</Text>
-            <Text style={styles.emptySub}>Tap + to add your first todo.</Text>
+            <View style={styles.emptyGlyph}>
+              <Ionicons name="sparkles-outline" size={22} color={color.accent} />
+            </View>
+            <Text style={styles.empty}>Nothing planned yet</Text>
+            <Text style={styles.emptySub}>Tell Overwatch what you'll do today. It'll check in at the time you said.</Text>
           </View>
         }
       />
 
-      <Pressable
-        style={({ pressed }) => [styles.fab, { bottom: 28 + insets.bottom }, pressed && styles.fabPressed]}
-        onPress={openCreate}
-      >
-        <Text style={styles.fabText}>+</Text>
-      </Pressable>
+      <View style={[styles.captureBar, { paddingBottom: spacing.md + insets.bottom }]}>
+        <Pressable
+          style={({ pressed }) => [styles.captureInput, pressed && styles.capturePressed]}
+          onPress={() => navigation.navigate('Chat')}
+          accessibilityRole="button"
+          accessibilityLabel="Chat with Overwatch"
+        >
+          <Ionicons name="chatbubble-ellipses" size={18} color={color.accent} />
+          <Text style={styles.capturePlaceholder} numberOfLines={1}>
+            Tell Overwatch what you'll do…
+          </Text>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}
+          onPress={openCreate}
+          accessibilityRole="button"
+          accessibilityLabel="Add a todo manually"
+        >
+          <Ionicons name="add" size={24} color={color.textPrimary} />
+        </Pressable>
+      </View>
 
       <AddEditTodoModal
         visible={modalVisible}
@@ -259,6 +271,7 @@ export default function TodoListScreen({ navigation }) {
         knownSections={knownSections}
         onSave={handleSave}
         onCancel={() => setModalVisible(false)}
+        onDelete={handleDelete}
       />
 
       <ConfirmModal
@@ -287,14 +300,31 @@ export default function TodoListScreen({ navigation }) {
   )
 }
 
-function SectionChip({ label, active, onPress, dotColor, progress }) {
+function SectionChip({ label, active, onPress, dotColor }) {
   return (
-    <Pressable style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
+    <Pressable
+      style={[styles.chip, active && styles.chipActive]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={`Show ${label}`}
+    >
       {dotColor && <View style={[styles.chipDot, { backgroundColor: dotColor }]} />}
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>
-        {label}
-        {progress && progress.total > 0 ? ` · ${progress.done}/${progress.total}` : ''}
-      </Text>
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+    </Pressable>
+  )
+}
+
+function HeaderIcon({ icon, label, onPress }) {
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+      onPress={onPress}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Ionicons name={icon} size={18} color={color.textSecondary} />
     </Pressable>
   )
 }
@@ -305,105 +335,116 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.xl,
-    paddingBottom: spacing.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: color.border,
+    paddingBottom: spacing.xs,
+    gap: spacing.md,
   },
-  headerTitle: { color: color.textPrimary, fontSize: font.xxl, fontWeight: '700', letterSpacing: -0.3 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  chatButton: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm - 1,
-    borderRadius: radius.pill,
-    backgroundColor: color.surfaceRaised,
-    borderWidth: 1,
-    borderColor: color.border,
-  },
-  chatButtonText: { color: color.textPrimary, fontSize: font.sm + 1, fontWeight: '600' },
-  iconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.pill,
-    backgroundColor: color.surfaceRaised,
-    borderWidth: 1,
-    borderColor: color.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconButtonText: { fontSize: font.md },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.pill,
-    backgroundColor: color.surfaceRaised,
-    borderWidth: 1,
-    borderColor: color.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: color.accent, fontSize: font.md, fontWeight: '700' },
-  sectionHeader: {
+  headerText: { flex: 1 },
+  greeting: { color: color.textPrimary, fontSize: font.xxl + 2, fontWeight: '800', letterSpacing: -0.5, marginTop: 2 },
+  date: {
     color: color.textMuted,
-    fontSize: font.xs - 1,
+    fontSize: font.xs,
     fontWeight: '700',
-    letterSpacing: 1.5,
+    letterSpacing: 1.2,
     textTransform: 'uppercase',
-    marginTop: spacing.lg + 2,
-    marginBottom: spacing.sm,
   },
-  chipRow: { maxHeight: 44, marginTop: spacing.md, marginBottom: spacing.xs },
-  chipRowContent: { paddingHorizontal: spacing.lg, gap: spacing.sm },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  iconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.pill,
+    backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatar: {
+    width: 38,
+    height: 38,
+    borderRadius: radius.pill,
+    backgroundColor: color.accentMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { color: '#fed7aa', fontSize: font.lg, fontWeight: '800' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.lg },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md + 2,
     paddingVertical: spacing.sm - 1,
-    borderRadius: radius.xl,
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.border,
-    marginRight: spacing.sm,
-  },
-  chipActive: { backgroundColor: color.accent, borderColor: color.accent },
-  chipDot: { width: 7, height: 7, borderRadius: radius.pill, marginRight: spacing.xs + 1 },
-  chipText: { color: color.textSecondary, fontSize: font.sm + 1, fontWeight: '600' },
-  chipTextActive: { color: color.onAccent },
-  listContent: { paddingHorizontal: spacing.lg },
-  emptyWrap: { alignItems: 'center', marginTop: 80 },
-  emptyGlyph: {
-    color: color.textMuted,
-    fontSize: 22,
-    width: 52,
-    height: 52,
     borderRadius: radius.pill,
+    backgroundColor: color.surface,
     borderWidth: 1,
     borderColor: color.border,
-    backgroundColor: color.surface,
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    lineHeight: 52,
-    marginBottom: spacing.lg,
   },
-  empty: { color: color.textSecondary, fontSize: font.lg, fontWeight: '600' },
-  emptySub: { color: color.textMuted, fontSize: font.sm + 1, marginTop: spacing.xs },
-  fab: {
-    position: 'absolute',
-    right: spacing.xl,
+  chipActive: { backgroundColor: color.textPrimary, borderColor: color.textPrimary },
+  chipDot: { width: 7, height: 7, borderRadius: radius.pill, marginRight: spacing.xs + 2 },
+  chipText: { color: color.textSecondary, fontSize: font.sm + 1, fontWeight: '600' },
+  chipTextActive: { color: color.background },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: spacing.sm,
+    marginTop: spacing.xl,
+    marginBottom: spacing.sm,
+  },
+  sectionHeader: { color: color.textSecondary, fontSize: font.md, fontWeight: '700' },
+  sectionCount: { color: color.textMuted, fontSize: font.sm },
+  listContent: { paddingHorizontal: spacing.lg },
+  emptyWrap: { alignItems: 'center', marginTop: 72, paddingHorizontal: spacing.xxl },
+  emptyGlyph: {
     width: 56,
     height: 56,
     borderRadius: radius.pill,
-    backgroundColor: color.accent,
+    backgroundColor: color.focusTint,
+    borderWidth: 1,
+    borderColor: color.focusBorder,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
+    marginBottom: spacing.lg,
   },
-  fabPressed: { backgroundColor: color.accentPressed },
-  fabText: { color: color.onAccent, fontSize: 28, fontWeight: '600', lineHeight: 30 },
+  empty: { color: color.textPrimary, fontSize: font.xl, fontWeight: '700' },
+  emptySub: { color: color.textMuted, fontSize: font.md, marginTop: spacing.xs + 2, textAlign: 'center', lineHeight: 20 },
+  captureBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    backgroundColor: color.background,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: color.border,
+  },
+  captureInput: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
+    height: 50,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.pill,
+    backgroundColor: color.surfaceRaised,
+    borderWidth: 1,
+    borderColor: color.borderStrong,
+  },
+  capturePressed: { backgroundColor: color.surface },
+  capturePlaceholder: { color: color.textSecondary, fontSize: font.lg, flexShrink: 1 },
+  addButton: {
+    width: 50,
+    height: 50,
+    borderRadius: radius.pill,
+    backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 })

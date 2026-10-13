@@ -42,7 +42,8 @@
           "icon": "./assets/icon.png",
           "color": "#f97316"
         }
-      ]
+      ],
+      "@react-native-vector-icons/ionicons"
     ]
   }
 }

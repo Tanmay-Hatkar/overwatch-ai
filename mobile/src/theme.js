@@ -21,10 +21,19 @@ export const color = {
   accentPressed: '#ea6a0c',
   accentMuted: '#7c3f10',
 
+  // Destructive actions only (delete, sign out) — never used to describe
+  // the user's own plans (PRD §5 principle 3: recall, never judgment).
   danger: '#f87171',
   dangerStrong: '#ef4444',
-  overdueBorder: '#5c2323',
-  overdueTint: 'rgba(239, 68, 68, 0.08)',
+
+  // "Still open from earlier" — a warm, neutral amber instead of an alarm red.
+  earlier: '#fbbf24',
+  earlierBorder: '#4a3714',
+  earlierTint: 'rgba(251, 191, 36, 0.06)',
+
+  // Up-next focus card
+  focusTint: 'rgba(249, 115, 22, 0.10)',
+  focusBorder: '#5a2e0e',
 
   backdrop: 'rgba(0, 0, 0, 0.65)',
 }
@@ -53,4 +62,5 @@ export const font = {
   lg: 15,
   xl: 17,
   xxl: 22,
+  display: 28,
 }

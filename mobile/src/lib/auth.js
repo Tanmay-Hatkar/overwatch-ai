@@ -8,15 +8,28 @@
  * the Capacitor app, using SecureStore instead of Capacitor Preferences.
  */
 
+import { Platform } from 'react-native'
 import * as SecureStore from 'expo-secure-store'
 import { configureWidget, clearWidget } from './widget'
 
 const TOKEN_KEY = 'ow.session.token'
 
+// SecureStore has no web implementation. The web build is only a dev
+// preview (`expo start --web`), so localStorage is an acceptable stand-in
+// there; native builds always use SecureStore.
+const store =
+  Platform.OS === 'web'
+    ? {
+        getItemAsync: async (k) => globalThis.localStorage?.getItem(k) ?? null,
+        setItemAsync: async (k, v) => globalThis.localStorage?.setItem(k, v),
+        deleteItemAsync: async (k) => globalThis.localStorage?.removeItem(k),
+      }
+    : SecureStore
+
 /** Read the stored bearer token. Returns null if never signed in. */
 export async function getStoredToken() {
   try {
-    return await SecureStore.getItemAsync(TOKEN_KEY)
+    return await store.getItemAsync(TOKEN_KEY)
   } catch {
     return null
   }
@@ -31,7 +44,7 @@ export async function getStoredToken() {
  * block sign-in.
  */
 export async function setStoredToken(token) {
-  await SecureStore.setItemAsync(TOKEN_KEY, token)
+  await store.setItemAsync(TOKEN_KEY, token)
   await configureWidget(token)
 }
 
@@ -43,7 +56,7 @@ export async function setStoredToken(token) {
  */
 export async function clearStoredToken() {
   try {
-    await SecureStore.deleteItemAsync(TOKEN_KEY)
+    await store.deleteItemAsync(TOKEN_KEY)
   } catch {
     // nothing to clear
   }

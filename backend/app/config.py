@@ -37,28 +37,6 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=500, description="Maximum tokens per response")
 
     # =========================================================================
-    # Web Push notifications (VAPID)
-    # =========================================================================
-    # The PRIVATE key is the single source of truth — the public key served to
-    # browsers is DERIVED from it at request time (see services/vapid_keys.py and
-    # the /push/vapid-public-key route), so it always matches and there is no
-    # separate public key to keep in sync. The field below is an optional manual
-    # override used only when no private key is set.
-    vapid_private_key: str = Field(default="", description="VAPID private key (base64url, secret)")
-    vapid_public_key: str = Field(
-        default="",
-        description="Optional explicit VAPID public key; normally derived from the private key.",
-    )
-    vapid_subject: str = Field(
-        default="mailto:admin@example.com",
-        description="VAPID subject (mailto: URL identifying the app)",
-    )
-    reminder_poll_interval_seconds: int = Field(
-        default=60,
-        description="How often the reminder scheduler checks for newly-overdue commitments",
-    )
-
-    # =========================================================================
     # Stale-plan detection (ADR-0017)
     # =========================================================================
     stale_check_threshold_hours: int = Field(

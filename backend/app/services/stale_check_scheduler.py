@@ -1,23 +1,25 @@
 """
 stale_check_scheduler.py — Background task that asks about dormant plans.
 
-How it works (mirrors reminder_scheduler.py's structure):
+How it works:
   - Started in FastAPI's lifespan on app startup
   - Polls every STALE_CHECK_POLL_INTERVAL_SECONDS
   - For each user, for each OPEN commitment that has gone quiet (no update
     in STALE_CHECK_THRESHOLD_HOURS) and hasn't been asked about before, we
-    ask ONCE — ever — "still the plan?" via push AND a logged conversation
-    turn (so the ask is visible even without push permission)
+    ask ONCE — ever — "still the plan?" as a logged assistant conversation
+    turn. The mobile app schedules its own on-device notification for the
+    same moment (mobile/src/lib/notifications.js) and shows this turn, with
+    its reply chips, when the user opens the chat.
   - Dedup is persisted in the database (commitments.stale_check_sent_at),
-    NOT in-memory — unlike ReminderScheduler, a process restart does not
-    reset the "have we asked" state, honoring the "fires once per
+    NOT in-memory — a process restart does not reset the "have we asked"
+    state, honoring the "fires once per
     commitment, ever" guarantee (see docs/adr/0017-stale-plan-detection.md).
 
 First-tick handling: the very first tick after a fresh deploy of this
 feature could find many pre-existing dormant commitments simultaneously
 (anything that predates the migration and happens to already be quiet).
-Firing a check-in burst for all of them at once would be jarring, so — like
-ReminderScheduler — the first tick of each process silently marks any
+Firing a check-in burst for all of them at once would be jarring, so the
+first tick of each process silently marks any
 current candidates as sent without asking, and only ticks after that
 actually ask.
 
@@ -34,13 +36,10 @@ from uuid import UUID
 from app.config import settings
 from app.database import get_connection
 from app.models.commitment import CommitmentResponse
-from app.models.push import PushSubscriptionResponse
 from app.repositories.commitment_repository import CommitmentRepository
 from app.repositories.conversation_repository import ConversationRepository
-from app.repositories.push_subscription_repository import PushSubscriptionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.commitment_service import CommitmentService
-from app.services.push_service import PushPayload, PushService
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +52,9 @@ class StaleCheckScheduler:
 
     def __init__(
         self,
-        push_service: PushService,
         poll_interval_seconds: int | None = None,
         threshold_hours: int | None = None,
     ) -> None:
-        self._push = push_service
         self._interval = poll_interval_seconds or settings.stale_check_poll_interval_seconds
         self._threshold_hours = threshold_hours or settings.stale_check_threshold_hours
         self._is_first_tick = True
@@ -103,15 +100,14 @@ class StaleCheckScheduler:
         """
         One polling cycle. Runs in a worker thread (sync code, blocking calls).
 
-        Iterates every user, scoping commitments/subscriptions/conversation
-        history to that user, so each person is only ever asked about their
+        Iterates every user, scoping commitments and conversation history to
+        that user, so each person is only ever asked about their
         own dormant plans.
         """
         conn = get_connection()
         try:
             commitment_service = CommitmentService(CommitmentRepository(conn))
             conversation_repo = ConversationRepository(conn)
-            sub_repo = PushSubscriptionRepository(conn)
             user_repo = UserRepository(conn)
 
             now = datetime.now(UTC)
@@ -130,15 +126,9 @@ class StaleCheckScheduler:
                     self._silently_mark_sent(commitment_service, user_id, candidates)
                     continue
 
-                subscriptions = sub_repo.list_for_user(user_id)
                 for commitment in candidates:
                     self._ask_about_one(
-                        commitment_service,
-                        conversation_repo,
-                        sub_repo,
-                        subscriptions,
-                        user_id,
-                        commitment,
+                        commitment_service, conversation_repo, user_id, commitment
                     )
 
             self._is_first_tick = False
@@ -164,22 +154,15 @@ class StaleCheckScheduler:
         self,
         commitment_service: CommitmentService,
         conversation_repo: ConversationRepository,
-        sub_repo: PushSubscriptionRepository,
-        subscriptions: list[PushSubscriptionResponse],
         user_id: UUID,
         commitment: CommitmentResponse,
     ) -> None:
         """
-        Ask about one dormant commitment via push AND a logged conversation
-        turn, then mark it sent regardless of delivery success — the
-        guarantee is "we asked," not "they saw it."
+        Ask about one dormant commitment via a logged conversation turn,
+        then mark it sent even if logging failed — the guarantee is
+        "we asked once," not "they saw it."
         """
         body = f'Still the plan — "{commitment.text}"? Or has today changed?'
-
-        payload = PushPayload(title="Overwatch", body=body, tag=f"stale:{commitment.id}")
-        stale = self._push.broadcast(subscriptions, payload)
-        for endpoint in stale:
-            sub_repo.delete_by_endpoint(endpoint)
 
         try:
             conversation_repo.append(user_id, "assistant", body)

@@ -25,6 +25,16 @@ class Settings(BaseSettings):
 
     groq_api_key: str = Field(default="", description="Groq API key (empty disables provider)")
     groq_model: str = Field(default="llama-3.1-8b-instant", description="Groq model identifier")
+    # Reasoning models (gpt-oss) spend hidden reasoning tokens out of the same
+    # max_tokens budget as the answer. At Groq's default effort the chat
+    # prompt used ~500 reasoning tokens and returned an empty reply.
+    groq_reasoning_effort: str = Field(
+        default="low", description="reasoning_effort sent to Groq reasoning models ('' = omit)"
+    )
+    groq_reasoning_model_prefixes: str = Field(
+        default="openai/gpt-oss",
+        description="Comma-separated model-id prefixes that accept reasoning_effort",
+    )
 
     ollama_base_url: str = Field(default="http://localhost:11434", description="Ollama HTTP base URL")
     ollama_model: str = Field(default="llama3.2", description="Ollama model identifier")

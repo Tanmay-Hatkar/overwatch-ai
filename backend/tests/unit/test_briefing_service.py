@@ -9,7 +9,7 @@ The LLM is mocked at the import site in briefing_service. Tests cover:
   - Prompt construction (commitment text appears in the user prompt)
 """
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 from unittest.mock import patch
 
@@ -289,7 +289,9 @@ def test_briefing_with_calendar_service_injects_events(
     # we just verify the prompt has the events section formatted correctly
     assert "Calendar events for today" in user_prompt
     # On weekdays, the mock provider returns 3 named events
-    if date.today().weekday() < 5:
+    # generate_today() with no timezone uses the UTC date — match it, not the
+    # machine-local date, or this fails whenever local and UTC days differ.
+    if datetime.now(UTC).date().weekday() < 5:
         assert "Daily standup" in user_prompt
         assert "Lunch with Alex" in user_prompt
         assert "1:1 with manager" in user_prompt

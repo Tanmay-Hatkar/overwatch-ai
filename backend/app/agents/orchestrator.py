@@ -53,6 +53,35 @@ def _call_openai(system_prompt: str, user_prompt: str, temperature: float) -> st
     return response.json()["choices"][0]["message"]["content"].strip()
 
 
+def _is_groq_reasoning_model(model: str) -> bool:
+    """True if `model` accepts Groq's reasoning_effort parameter."""
+    prefixes = [p.strip() for p in settings.groq_reasoning_model_prefixes.split(",") if p.strip()]
+    return any(model.startswith(p) for p in prefixes)
+
+
+def _groq_body(system_prompt: str, user_prompt: str, temperature: float) -> dict:
+    """
+    Build the Groq request body.
+
+    For reasoning models, reasoning tokens count against max_tokens. Without
+    a low effort they can use the whole budget and leave an empty answer,
+    so reasoning_effort is set for those models (and only those: others
+    reject the parameter).
+    """
+    body = {
+        "model": settings.groq_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": settings.llm_max_tokens,
+    }
+    if settings.groq_reasoning_effort and _is_groq_reasoning_model(settings.groq_model):
+        body["reasoning_effort"] = settings.groq_reasoning_effort
+    return body
+
+
 def _call_groq(system_prompt: str, user_prompt: str, temperature: float) -> str:
     """Call Groq API. Same request/response shape as OpenAI."""
     response = requests.post(
@@ -61,15 +90,7 @@ def _call_groq(system_prompt: str, user_prompt: str, temperature: float) -> str:
             "Authorization": f"Bearer {settings.groq_api_key}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": settings.groq_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": temperature,
-            "max_tokens": settings.llm_max_tokens,
-        },
+        json=_groq_body(system_prompt, user_prompt, temperature),
         timeout=30,
     )
     response.raise_for_status()
@@ -134,8 +155,8 @@ def call_llm(
             settings.llm_temperature (0.7) for creative tasks.
 
     Returns:
-        The first successful LLM reply (stripped), or None if every
-        configured provider failed.
+        The first successful, non-empty LLM reply (stripped), or None if
+        every configured provider failed or returned nothing.
     """
     if temperature is None:
         temperature = settings.llm_temperature
@@ -146,6 +167,11 @@ def call_llm(
             continue
         try:
             reply = provider["fn"](system_prompt, user_prompt, temperature)
+            if not reply:
+                # e.g. a reasoning model that ran out of tokens before
+                # answering. An empty string isn't an answer; try the next.
+                logger.warning(f"LLM provider {provider['name']} returned an empty reply")
+                continue
             logger.info(f"LLM reply from {provider['name']} ({len(reply)} chars)")
             return reply
         except Exception as e:

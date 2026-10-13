@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import cors_origin_list, settings
 from app.database import init_db
-from app.routes import auth, briefings, calendar, chat, commitments, reflections
+from app.routes import auth, briefings, calendar, chat, commitments, goals, reflections
 from app.services.stale_check_scheduler import StaleCheckScheduler
 
 
@@ -102,6 +102,9 @@ app.add_middleware(
 
 # Commitments — CRUD + natural language parsing
 app.include_router(commitments.router)
+
+# Goals — weekly rate goals ("10 applications a week"), ADR-0026
+app.include_router(goals.router)
 
 # Briefings — daily LLM-generated summary with cache
 app.include_router(briefings.router)

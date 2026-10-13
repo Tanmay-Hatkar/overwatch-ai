@@ -123,6 +123,17 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
+    # Weekly rate goals (ADR-0026)
+    # =========================================================================
+    goal_max_target: int = Field(default=100, description="Largest weekly target a goal can have")
+    goal_max_log_amount: int = Field(default=50, description="Largest single progress log")
+    # With this many days left in the week (Fri = 3, counting today), a goal
+    # that isn't met gets the one end-of-week check-in (PRD §4.5).
+    goal_check_in_days_left: int = Field(
+        default=3, description="Days-left threshold for the end-of-week goal check-in"
+    )
+
+    # =========================================================================
     # Loader config
     # =========================================================================
     # env_file: load from backend/.env (relative to where uvicorn runs)

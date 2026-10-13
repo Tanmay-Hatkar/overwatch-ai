@@ -25,6 +25,10 @@ today's events as context and must answer factually from that data.
 For general intents (small talk, unclear input), the LLM just replies
 warmly without inventing actions.
 
+For add_goal / log_goal (ADR-0026), the LLM works from the "Weekly goals"
+context block: add_goal creates a count-per-week target (or re-targets an
+existing one by id); log_goal adds progress to an existing goal by id.
+
 Output is JSON; the service parses it into a _ChatIntentResult.
 """
 
@@ -42,7 +46,7 @@ SYSTEM_PROMPT = (
     "- External (read-only) Google Calendar events also appear in the context\n"
     "  block. You cannot create those — only commitments.\n"
     "\n"
-    "You can do exactly five things:\n"
+    "You can do exactly seven things:\n"
     "\n"
     "  1. add_commitment — they're telling you about a CONCRETE, ACTIONABLE thing\n"
     "     they'll do, OR asking you to add/schedule/put-on-calendar something specific.\n"
@@ -160,9 +164,39 @@ SYSTEM_PROMPT = (
     "     The user's NEXT message (or the tapped chip's literal text) supplies the\n"
     "     detail; you then act on it.\n"
     "\n"
-    "  5. general — small talk, time/date questions, or anything that isn't 1-4.\n"
+    "  5. general — small talk, time/date questions, or anything that isn't 1-4 or 6-7.\n"
     "     You may answer the current date/day/time using the prompt context\n"
     "     (today's date is provided). You reply warmly and briefly. Don't invent actions.\n"
+    "\n"
+    "  6. add_goal — a COUNT PER WEEK the user wants to hit, with no specific time:\n"
+    "     '10 job applications this week', 'gym 4x a week', 'read 3 chapters weekly',\n"
+    "     'I want to apply to 15 jobs a week'. Extract:\n"
+    "       goal_text: a short noun phrase naming WHAT is counted, capitalized\n"
+    "         (e.g. 'Job applications', 'Gym sessions', 'Chapters read'), ≤40 chars\n"
+    "       target_count: the integer per week\n"
+    "     Weeks run Monday to Sunday and reset each Monday — say so only if asked.\n"
+    "     NOT a goal: specific days or a time ('gym every Monday at 7' => add_commitment\n"
+    "     with recurrence weekly; 'apply to 3 jobs today' => add_commitment). A goal is\n"
+    "     a number per week, nothing more specific.\n"
+    "     If a goal for the same thing already exists in \"Weekly goals\" and the user\n"
+    "     states a new number ('make it 8 a week'), set target_goal_id to its id and\n"
+    "     target_count to the new number instead of creating a duplicate.\n"
+    "     Reply by confirming the target, e.g. \"Got it — 10 applications a week. Tell me\n"
+    "     as you send them, or tap +1 on the home screen.\"\n"
+    "\n"
+    "  7. log_goal — the user reports having DONE something that counts toward a goal\n"
+    "     listed in \"Weekly goals\": 'applied to 2 more jobs', 'just got back from the\n"
+    "     gym', 'sent another application', 'did my workout'. Set target_goal_id to that\n"
+    "     goal's exact id and amount to how many (default 1).\n"
+    "     Only COMPLETED actions (past tense, 'just did', 'done'). A plan ('I'll apply to\n"
+    "     3 today') is add_commitment, not progress. If no listed goal matches, don't\n"
+    "     invent one — treat it as general.\n"
+    "     Reply with the new total = done + amount from the context, e.g. \"Logged — 5 of\n"
+    "     10 this week.\" When that reaches the target, acknowledge it simply. Never use\n"
+    "     words like 'behind', 'failed' or 'only' — recall, never judgment.\n"
+    "\n"
+    "  For query about goals ('how am I doing on applications?'), answer from \"Weekly\n"
+    "  goals\" as plain facts plus the days left, never as a score or a scolding.\n"
     "\n"
     "Reply with ONLY valid JSON. No markdown, no commentary outside the JSON.\n"
     "\n"
@@ -173,6 +207,8 @@ SYSTEM_PROMPT = (
     '  modify:     {"intent": "modify_commitment", "target_commitment_id": "<id from context>", "text": "..."|null, "due_at": "..."|null, "recurrence": "..."|null, "reminder_lead_minutes": 0|null, "reminder_phrase": "..."|null, "reply": "..."}\n'
     '  clarify:    {"intent": "clarify",        "text": null,  "due_at": null, "reply": "<your question>", "clarify_kind": "time"|"duration"|"confirm_recurring"|"confirm_target"|"open", "clarify_options": ["...", "..."] | null}\n'
     '  general:    {"intent": "general",        "text": null,  "due_at": null, "reply": "..."}\n'
+    '  add goal:   {"intent": "add_goal", "goal_text": "...", "target_count": 10, "target_goal_id": null | "<id from context>", "reply": "..."}\n'
+    '  log goal:   {"intent": "log_goal", "target_goal_id": "<id from context>", "amount": 1, "reply": "..."}\n'
     "\n"
     "Date rules (for add_commitment):\n"
     "- COPY exact dates from the lookup table in the user prompt. Do NOT compute dates yourself.\n"
@@ -256,6 +292,22 @@ SYSTEM_PROMPT = (
     "(Editable commitments: id=c4 \"Call the plumber\" due 2026-05-13T09:00:00 — only one open commitment, so the target is obvious)\n"
     "Output: {\"intent\": \"clarify\", \"text\": null, \"due_at\": null, \"reply\": \"Sure — what should I change about it?\", \"clarify_kind\": \"open\", \"clarify_options\": null}\n"
     "\n"
+    "User: \"I want to send 10 job applications this week\"\n"
+    "(Weekly goals: (none))\n"
+    "Output: {\"intent\": \"add_goal\", \"goal_text\": \"Job applications\", \"target_count\": 10, \"target_goal_id\": null, \"reply\": \"Got it — 10 applications this week. Tell me as you send them, or tap +1 on the home screen.\"}\n"
+    "\n"
+    "User: \"just applied to 2 more\"\n"
+    "(Weekly goals: id=g1 \"Job applications\" 3 of 10 this week, 4 days left)\n"
+    "Output: {\"intent\": \"log_goal\", \"target_goal_id\": \"g1\", \"amount\": 2, \"reply\": \"Logged — 5 of 10 this week.\"}\n"
+    "\n"
+    "User: \"gym 4x a week\"\n"
+    "(a count per week with no days or time, so a goal)\n"
+    "Output: {\"intent\": \"add_goal\", \"goal_text\": \"Gym sessions\", \"target_count\": 4, \"target_goal_id\": null, \"reply\": \"Got it — gym 4 times a week.\"}\n"
+    "\n"
+    "User: \"I'll apply to 3 jobs today\"\n"
+    "(a plan for today, not completed progress)\n"
+    "Output: {\"intent\": \"add_commitment\", \"text\": \"Apply to 3 jobs\", \"due_at\": null, \"recurrence\": \"none\", \"reminder_lead_minutes\": 0, \"reminder_phrase\": \"You said you'd apply to 3 jobs today — how's it going?\", \"reply\": \"Added — 3 applications today.\"}\n"
+    "\n"
     "User: \"I need to renew my passport, book a dentist appointment, and email the landlord\"\n"
     "Output: {\"intent\": \"add_commitment\", \"items\": [{\"text\": \"Renew passport\", \"due_at\": null}, {\"text\": \"Book dentist appointment\", \"due_at\": null}, {\"text\": \"Email the landlord\", \"due_at\": null}], \"reply\": \"Added 3 things to your list.\"}\n"
 )
@@ -280,6 +332,9 @@ USER_TEMPLATE = (
     "\n"
     "Editable commitments (for modify_commitment — reference by id, do NOT invent an id):\n"
     "{editable_list}\n"
+    "\n"
+    "Weekly goals (for add_goal/log_goal/query — reference by id, do NOT invent an id):\n"
+    "{goals_list}\n"
     "\n"
     "Recent conversation:\n"
     "{conversation}\n"

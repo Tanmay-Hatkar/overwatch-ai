@@ -1,7 +1,7 @@
 # Product Requirements Document — Overwatch
 
 **Status:** Draft (active development)
-**Last updated:** 2026-10-09 (mobile-only client — see ADR-0024)
+**Last updated:** 2026-10-13 (weekly rate goals — see ADR-0026)
 **Owner:** Tanmay Hatkar
 
 ---
@@ -124,7 +124,9 @@ where it's deliberately headed next, not the original MVP guess.
   rebuilt there.
 - Commitment capture + surgical, exactly-timed follow-up
 - Morning brief, evening reflection — the daily bookending ritual
-- Rate-goal tracking with agency-preserving renegotiation
+- Rate-goal tracking with agency-preserving renegotiation — shipped as
+  weekly goals (ADR-0026): chat or one-tap +1 logging, Monday reset, and a
+  once-a-week "keep going / adjust / call it good" check-in
 - Stale-plan detection (one-time, conversational, ADR-0017)
 - Reminder escalation for ignored reminders (ring alarm, ADR-0019)
 - Home-screen widget (ADR-0020)
@@ -175,7 +177,8 @@ where it's deliberately headed next, not the original MVP guess.
 
 ## 11. Open questions
 
-- **Cadence parsing for rate goals:** how does the LLM disambiguate "10 apps a week" (Mon-Fri? calendar week? sliding 7 days?)
+- ~~**Cadence parsing for rate goals:** how does the LLM disambiguate "10 apps a week" (Mon-Fri? calendar week? sliding 7 days?)~~
+  Answered in ADR-0026: the user's local calendar week, Monday to Sunday.
 - **Reconciliation:** if a user mentions a commitment that resembles an existing one, do we update it or create new?
 - **Verification:** how does the system know a workout actually happened? (Self-report or integrations?)
 - **Privacy:** what data goes to OpenAI vs Ollama? Is there a "sensitive commitment" mode?

@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.commitment import CommitmentResponse
-
+from app.models.goal import GoalResponse
 
 # Intents the chat router can classify a message into.
 ChatIntent = Literal[
@@ -21,6 +21,8 @@ ChatIntent = Literal[
     "modify_commitment",  # edits an EXISTING open commitment (reschedule, retitle, recurrence)
     "clarify",   # needs more info before it can act — asks a question, creates nothing
     "general",
+    "add_goal",  # a count-per-week target: "10 applications this week" (ADR-0026)
+    "log_goal",  # progress toward an existing goal: "applied to 2 more"
 ]
 
 
@@ -78,6 +80,13 @@ class ChatResponse(BaseModel):
         description=(
             "If intent='add_commitment', the created commitment record. "
             "If intent='modify_commitment', the updated commitment record."
+        ),
+    )
+    goal: GoalResponse | None = Field(
+        default=None,
+        description=(
+            "If intent='add_goal' or 'log_goal', the goal after the change, "
+            "with this week's progress."
         ),
     )
     clarify_kind: ClarifyKind | None = Field(
@@ -145,6 +154,13 @@ class _ChatIntentResult(BaseModel):
     # commitment (by id, drawn from the "Editable commitments" context
     # block) this message edits.
     target_commitment_id: str | None = None
+    # add_goal / log_goal (ADR-0026). target_goal_id comes from the "Weekly
+    # goals" context block: for log_goal it names the goal being counted;
+    # for add_goal it's set only when re-targeting an existing goal.
+    goal_text: str | None = None
+    target_count: int | None = None
+    target_goal_id: str | None = None
+    amount: int | None = None
     reply: str  # Always; the natural-language acknowledgment / answer / chat
     # Only meaningful when intent='clarify' — see ClarifyKind/ChatResponse.
     clarify_kind: ClarifyKind | None = None

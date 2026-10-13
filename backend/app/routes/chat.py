@@ -20,11 +20,13 @@ from app.models.chat import ChatRequest, ChatResponse, ChatTurn
 from app.models.user import UserResponse
 from app.repositories.commitment_repository import CommitmentRepository
 from app.repositories.conversation_repository import ConversationRepository
+from app.repositories.goal_repository import GoalRepository
 from app.routes.auth import current_user
 from app.routes.calendar import get_calendar_service
 from app.services.calendar_service import CalendarService
 from app.services.chat_service import ChatError, ChatService
 from app.services.commitment_service import CommitmentService
+from app.services.goal_service import GoalService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -36,7 +38,8 @@ def _build_chat_service(
     """Construct a ChatService for one request, with DB-backed conversation memory."""
     commitment_service = CommitmentService(CommitmentRepository(conn))
     conversation_repo = ConversationRepository(conn)
-    return ChatService(commitment_service, calendar_service, conversation_repo)
+    goal_service = GoalService(GoalRepository(conn))
+    return ChatService(commitment_service, calendar_service, conversation_repo, goal_service)
 
 
 def _build_conversation_repo(

@@ -13,6 +13,12 @@ today's events as context. It answers from that data, never inventing.
 
 For general, the LLM just chats. No DB writes.
 
+For add_goal / log_goal (ADR-0026), the LLM works from a "Weekly goals"
+context block and the service creates/re-targets a goal or logs progress
+through GoalService. When the action can't be applied (no goal service,
+unknown id), the reply is replaced with an honest one rather than letting
+the LLM's "Logged" stand for something that didn't happen.
+
 Failure handling: if the LLM returns invalid JSON or is unavailable,
 raise ChatError. The route turns this into a 503 with a user-readable
 message.
@@ -46,6 +52,7 @@ from app.models.commitment import (
     CommitmentUpdate,
     Recurrence,
 )
+from app.models.goal import GoalCreate, GoalResponse, GoalUpdate
 from app.models.stale_check import _StaleCheckReplyResult
 from app.prompts.chat import SYSTEM_PROMPT, USER_TEMPLATE
 from app.prompts.stale_check_reply import (
@@ -55,6 +62,7 @@ from app.prompts.stale_check_reply import (
 from app.repositories.conversation_repository import ConversationRepository
 from app.services.calendar_service import CalendarService
 from app.services.commitment_service import CommitmentService
+from app.services.goal_service import GoalService
 from app.services.timezone_utils import resolve_timezone, to_user_date
 
 logger = logging.getLogger(__name__)
@@ -82,6 +90,7 @@ class ChatService:
         commitment_service: CommitmentService,
         calendar_service: CalendarService | None = None,
         conversation_repo: ConversationRepository | None = None,
+        goal_service: GoalService | None = None,
     ) -> None:
         self._service = commitment_service
         self._calendar = calendar_service
@@ -89,6 +98,10 @@ class ChatService:
         # database (server-side, cross-device) instead of relying solely on the
         # client-supplied history. Optional so existing tests/callers still work.
         self._conversation = conversation_repo
+        # Optional for the same reason: weekly goals (ADR-0026) are context
+        # and actions only when wired; without it goal intents degrade to
+        # an honest "couldn't do that" reply.
+        self._goals = goal_service
 
     def handle(self, user_id: UUID, request: ChatRequest) -> ChatResponse:
         """Process one chat message end-to-end, scoped to user_id."""
@@ -134,6 +147,12 @@ class ChatService:
         elif result.intent == "modify_commitment":
             commitment = self._modify_commitment(user_id, result, user_tz)
 
+        goal: GoalResponse | None = None
+        if result.intent in ("add_goal", "log_goal"):
+            goal = self._apply_goal_intent(user_id, result, user_tz)
+            if goal is None:
+                result.reply = self._goal_fallback_reply(result.intent)
+
         # Persist this exchange so it's part of future context.
         if self._conversation is not None:
             self._conversation.append(user_id, "user", request.message)
@@ -143,6 +162,7 @@ class ChatService:
             reply=result.reply,
             intent=result.intent,
             commitment=commitment,
+            goal=goal,
             clarify_kind=result.clarify_kind if result.intent == "clarify" else None,
             clarify_options=result.clarify_options if result.intent == "clarify" else None,
         )
@@ -224,6 +244,7 @@ class ChatService:
             overdue_count=len(overdue),
             overdue_list=overdue_list,
             editable_list=editable_list,
+            goals_list=self._format_goals(user_id, user_tz),
             events_count=events_count,
             events_list=events_list,
             conversation=conversation,
@@ -256,6 +277,81 @@ class ChatService:
                 rec = f", recurrence={c.recurrence.value}" if c.recurrence.value != "none" else ""
                 lines.append(f'  - id={c.id} "{c.text}" (no due date){rec}')
         return "\n".join(lines)
+
+    def _format_goals(self, user_id: UUID, user_tz: ZoneInfo) -> str:
+        """Active weekly goals with ids and this week's progress, for the prompt."""
+        goals = self._goals.list(user_id, user_tz) if self._goals is not None else []
+        if not goals:
+            return "  (none)"
+        return "\n".join(
+            f'  - id={g.id} "{g.text}" {g.done_this_week} of {g.target_count} this week, '
+            f"{g.days_left} day{'s' if g.days_left != 1 else ''} left"
+            for g in goals
+        )
+
+    # ------------------------------------------------------------------
+    # Weekly goals (ADR-0026)
+    # ------------------------------------------------------------------
+
+    def _apply_goal_intent(
+        self, user_id: UUID, result: _ChatIntentResult, user_tz: ZoneInfo
+    ) -> GoalResponse | None:
+        """
+        Create, re-target, or log progress on a goal per the LLM's result.
+
+        Returns:
+            The goal after the change, or None when nothing could be applied
+            (no goal service wired, missing/unknown id, unusable numbers).
+        """
+        if self._goals is None:
+            logger.warning("%s intent but no GoalService wired; skipping", result.intent)
+            return None
+        target_id = self._parse_goal_id(result.target_goal_id)
+        if result.intent == "log_goal":
+            if target_id is None:
+                return None
+            amount = max(1, min(settings.goal_max_log_amount, int(result.amount or 1)))
+            return self._goals.log(user_id, target_id, amount, user_tz)
+        return self._create_or_retarget_goal(user_id, result, target_id, user_tz)
+
+    def _create_or_retarget_goal(
+        self,
+        user_id: UUID,
+        result: _ChatIntentResult,
+        target_id: UUID | None,
+        user_tz: ZoneInfo,
+    ) -> GoalResponse | None:
+        """add_goal: new goal, or a new weekly target for an existing one."""
+        assert self._goals is not None
+        count = result.target_count
+        if count is None or not 1 <= count <= settings.goal_max_target:
+            logger.warning("add_goal with unusable target_count %r; skipping", count)
+            return None
+        if target_id is not None:
+            return self._goals.update(user_id, target_id, GoalUpdate(target_count=count), user_tz)
+        text = (result.goal_text or result.text or "").strip()[:200]
+        if not text:
+            logger.warning("add_goal had no goal_text; skipping")
+            return None
+        return self._goals.create(user_id, GoalCreate(text=text, target_count=count), user_tz)
+
+    @staticmethod
+    def _parse_goal_id(raw: str | None) -> UUID | None:
+        """The LLM's target_goal_id as a UUID, or None if absent/garbled."""
+        if not raw:
+            return None
+        try:
+            return UUID(raw)
+        except ValueError:
+            logger.warning("goal intent returned a non-UUID id: %r", raw)
+            return None
+
+    @staticmethod
+    def _goal_fallback_reply(intent: str) -> str:
+        """Honest reply when a goal intent couldn't be applied."""
+        if intent == "log_goal":
+            return "I couldn't tell which weekly goal that counts toward — which one should I add it to?"
+        return "I couldn't set that goal up — how many times a week, and for what?"
 
     @staticmethod
     def _strip_code_fences(raw: str) -> str:

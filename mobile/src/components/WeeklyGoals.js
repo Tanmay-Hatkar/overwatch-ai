@@ -60,26 +60,31 @@ function GoalCard({ goal, onLog, onOpen, onDecide }) {
   const settled = goal.state === 'settled'
   const checkIn = goalCheckInPrompt(goal)
 
+  // The card is a plain container with sibling controls: nesting the +1
+  // and check-in buttons inside a pressable card renders <button> inside
+  // <button> on web and blurs them together for screen readers.
   return (
-    <Pressable
-      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-      onPress={() => onOpen(goal)}
-      accessibilityRole="button"
-      accessibilityLabel={`${goal.text}, ${goal.done_this_week} of ${goal.target_count} this week. Edit`}
-    >
+    <View style={styles.card}>
       <View style={styles.topRow}>
-        <View style={styles.titleCol}>
-          <Text style={styles.title} numberOfLines={1}>
-            {goal.text}
+        <Pressable
+          style={({ pressed }) => [styles.opener, pressed && styles.pressed]}
+          onPress={() => onOpen(goal)}
+          accessibilityRole="button"
+          accessibilityLabel={`${goal.text}, ${goal.done_this_week} of ${goal.target_count} this week. Edit`}
+        >
+          <View style={styles.titleCol}>
+            <Text style={styles.title} numberOfLines={1}>
+              {goal.text}
+            </Text>
+            <Text style={[styles.status, met && styles.statusMet]} numberOfLines={2}>
+              {goalStatusLine(goal)}
+            </Text>
+          </View>
+          <Text style={styles.count}>
+            {goal.done_this_week}
+            <Text style={styles.countTarget}>/{goal.target_count}</Text>
           </Text>
-          <Text style={[styles.status, met && styles.statusMet]} numberOfLines={2}>
-            {goalStatusLine(goal)}
-          </Text>
-        </View>
-        <Text style={styles.count}>
-          {goal.done_this_week}
-          <Text style={styles.countTarget}>/{goal.target_count}</Text>
-        </Text>
+        </Pressable>
         <Pressable
           style={({ pressed }) => [styles.plus, (met || settled) && styles.plusQuiet, pressed && styles.pressed]}
           onPress={() => onLog(goal)}
@@ -115,7 +120,7 @@ function GoalCard({ goal, onLog, onOpen, onDecide }) {
           </View>
         </View>
       )}
-    </Pressable>
+    </View>
   )
 }
 
@@ -156,8 +161,8 @@ const styles = StyleSheet.create({
     padding: spacing.md + 2,
     marginBottom: spacing.sm,
   },
-  cardPressed: { backgroundColor: color.surfaceRaised },
   topRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  opener: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   titleCol: { flex: 1 },
   title: { color: color.textPrimary, fontSize: font.lg, fontWeight: '700' },
   status: { color: color.textMuted, fontSize: font.sm, marginTop: 2 },

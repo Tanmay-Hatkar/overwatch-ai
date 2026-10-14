@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o-mini", description="OpenAI model identifier")
 
     groq_api_key: str = Field(default="", description="Groq API key (empty disables provider)")
-    groq_model: str = Field(default="llama-3.1-8b-instant", description="Groq model identifier")
+    groq_model: str = Field(default="openai/gpt-oss-120b", description="Groq model identifier")
     # Reasoning models (gpt-oss) spend hidden reasoning tokens out of the same
     # max_tokens budget as the answer. At Groq's default effort the chat
     # prompt used ~500 reasoning tokens and returned an empty reply.

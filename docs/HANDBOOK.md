@@ -113,7 +113,7 @@ A walk-through of what happens when you type **"remind me to call mom at 7"** in
 The service calls `agents/orchestrator.call_llm()`. This is the **only** place in the codebase that touches an LLM. It tries:
 
 1. **OpenAI** (gpt-4o-mini) — paid, best quality
-2. **Groq** (llama-3.1-8b-instant) — free tier, fast
+2. **Groq** (openai/gpt-oss-120b) — free tier, fast
 3. **Ollama** (llama3.2) — local, free, no network
 
 If 1 returns an HTTP error or rate limit, it transparently retries with 2. ADR-0002 covers why.

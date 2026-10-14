@@ -2,7 +2,7 @@
 chat_service.py — The conversational chat router.
 
 A single LLM call does TWO jobs:
-  1. Classify intent (add_commitment | query | general)
+  1. Classify intent (add_commitment | query | modify_commitment | close_commitment | ...)
   2. Generate a natural-language reply
 
 For add_commitment, the LLM also extracts text + due_at and we persist
@@ -12,6 +12,12 @@ For query, the LLM is given the user's open + overdue commitments and
 today's events as context. It answers from that data, never inventing.
 
 For general, the LLM just chats. No DB writes.
+
+For close_commitment (ADR-0027), the LLM names one or more open
+commitments by id plus a close_action: done / abandoned are status
+changes, deleted is a hard delete. Ids that aren't the user's open
+commitments are skipped; if none apply, the reply is replaced with an
+honest one, same as for goals.
 
 For add_goal / log_goal (ADR-0026), the LLM works from a "Weekly goals"
 context block and the service creates/re-targets a goal or logs progress
@@ -147,6 +153,12 @@ class ChatService:
         elif result.intent == "modify_commitment":
             commitment = self._modify_commitment(user_id, result, user_tz)
 
+        closed: list[CommitmentResponse] | None = None
+        if result.intent == "close_commitment":
+            closed = self._close_commitments(user_id, result) or None
+            if closed is None:
+                result.reply = self._close_fallback_reply()
+
         goal: GoalResponse | None = None
         if result.intent in ("add_goal", "log_goal"):
             goal = self._apply_goal_intent(user_id, result, user_tz)
@@ -163,6 +175,8 @@ class ChatService:
             intent=result.intent,
             commitment=commitment,
             goal=goal,
+            closed=closed,
+            close_action=result.close_action if closed else None,
             clarify_kind=result.clarify_kind if result.intent == "clarify" else None,
             clarify_options=result.clarify_options if result.intent == "clarify" else None,
         )
@@ -616,6 +630,74 @@ class ChatService:
             return existing
 
         return self._service.update(user_id, target_id, CommitmentUpdate(**changes))
+
+    # ------------------------------------------------------------------
+    # Close / delete (ADR-0027)
+    # ------------------------------------------------------------------
+
+    def _close_commitments(
+        self, user_id: UUID, result: _ChatIntentResult
+    ) -> list[CommitmentResponse]:
+        """
+        Mark done, abandon, or hard-delete the commitments the LLM named.
+
+        Args:
+            user_id: Owner; every target is scoped to them.
+            result: Parsed LLM output with target id(s) and close_action.
+
+        Returns:
+            Each commitment that was closed, as it was before the change.
+            Empty when nothing could be applied (no action, no usable id,
+            or every id was unknown / not open / another user's).
+        """
+        if result.close_action is None:
+            logger.warning("close_commitment intent had no close_action; skipping")
+            return []
+        closed: list[CommitmentResponse] = []
+        for target_id in self._close_target_ids(result):
+            existing = self._service.get(user_id, target_id)
+            if existing is None or existing.status != CommitmentStatus.OPEN:
+                logger.warning("close_commitment target not found or not open: %s", target_id)
+                continue
+            if self._apply_close(user_id, target_id, result.close_action):
+                closed.append(existing)
+        return closed
+
+    @staticmethod
+    def _close_target_ids(result: _ChatIntentResult) -> list[UUID]:
+        """
+        The LLM's target id(s) as distinct UUIDs, garbled ones dropped.
+
+        Accepts the list field or the single-id field (models sometimes
+        reuse modify_commitment's shape), capped at chat_max_close_targets.
+        """
+        raw_ids = list(result.target_commitment_ids or [])
+        if result.target_commitment_id:
+            raw_ids.append(result.target_commitment_id)
+        ids: list[UUID] = []
+        for raw in raw_ids:
+            try:
+                parsed = UUID(raw)
+            except (ValueError, TypeError, AttributeError):
+                logger.warning("close_commitment returned a non-UUID id: %r", raw)
+                continue
+            if parsed not in ids:
+                ids.append(parsed)
+        if len(ids) > settings.chat_max_close_targets:
+            logger.warning("close_commitment named %d targets; capping", len(ids))
+        return ids[: settings.chat_max_close_targets]
+
+    def _apply_close(self, user_id: UUID, commitment_id: UUID, action: str) -> bool:
+        """Apply one close action. Returns True if the commitment changed."""
+        if action == "deleted":
+            return self._service.delete(user_id, commitment_id)
+        status = CommitmentStatus.DONE if action == "done" else CommitmentStatus.ABANDONED
+        return self._service.update(user_id, commitment_id, CommitmentUpdate(status=status)) is not None
+
+    @staticmethod
+    def _close_fallback_reply() -> str:
+        """Honest reply when a close/delete couldn't be applied."""
+        return "I couldn't find that on your open list — which one did you mean?"
 
     @staticmethod
     def _parse_recurrence(value: str | None) -> Recurrence:

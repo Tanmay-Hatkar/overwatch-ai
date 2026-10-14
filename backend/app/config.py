@@ -123,6 +123,15 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
+    # Chat close/delete (ADR-0027)
+    # =========================================================================
+    # Upper bound on how many commitments one chat message may close, so a
+    # misread "clear it all" can't wipe a whole list in one turn.
+    chat_max_close_targets: int = Field(
+        default=10, description="Most commitments one chat message can close/delete"
+    )
+
+    # =========================================================================
     # Weekly rate goals (ADR-0026)
     # =========================================================================
     goal_max_target: int = Field(default=100, description="Largest weekly target a goal can have")

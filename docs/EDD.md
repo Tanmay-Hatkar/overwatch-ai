@@ -76,6 +76,13 @@ timezone. The API returns it with `done_this_week`, `remaining`,
 `routes/goals.py`. `ChatService` takes an optional `GoalService` for the
 `add_goal` / `log_goal` intents.
 
+Chat can also end commitments (ADR-0027): the `close_commitment` intent
+takes one or more ids from the "Editable commitments" prompt block and a
+`close_action` of `done | abandoned | deleted`. Done and abandoned go
+through `CommitmentService.update` (recurring items roll forward); deleted
+goes through `CommitmentService.delete`. Only open, user-owned ids apply,
+capped at `chat_max_close_targets` per message.
+
 ## 4. API design
 
 _To be filled during slice 1 (Todos), then expanded per slice._

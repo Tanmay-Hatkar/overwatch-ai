@@ -23,7 +23,13 @@ ChatIntent = Literal[
     "general",
     "add_goal",  # a count-per-week target: "10 applications this week" (ADR-0026)
     "log_goal",  # progress toward an existing goal: "applied to 2 more"
+    "close_commitment",  # finish / drop / delete existing commitment(s) (ADR-0027)
 ]
+
+# For intent='close_commitment': what happens to the target(s). 'done' and
+# 'abandoned' are status changes (a recurring item marked done rolls forward,
+# same as the checkbox); 'deleted' is a hard delete, only on an explicit ask.
+CloseAction = Literal["done", "abandoned", "deleted"]
 
 
 class ChatTurn(BaseModel):
@@ -81,6 +87,18 @@ class ChatResponse(BaseModel):
             "If intent='add_commitment', the created commitment record. "
             "If intent='modify_commitment', the updated commitment record."
         ),
+    )
+    closed: list[CommitmentResponse] | None = Field(
+        default=None,
+        description=(
+            "If intent='close_commitment', each commitment that was closed, "
+            "as it was just before closing (a deleted one no longer exists). "
+            "None when nothing could be applied."
+        ),
+    )
+    close_action: CloseAction | None = Field(
+        default=None,
+        description="If intent='close_commitment', what was done to `closed`.",
     )
     goal: GoalResponse | None = Field(
         default=None,
@@ -154,6 +172,10 @@ class _ChatIntentResult(BaseModel):
     # commitment (by id, drawn from the "Editable commitments" context
     # block) this message edits.
     target_commitment_id: str | None = None
+    # close_commitment (ADR-0027): one or more ids from the same block, and
+    # what to do with them.
+    target_commitment_ids: list[str] | None = None
+    close_action: CloseAction | None = None
     # add_goal / log_goal (ADR-0026). target_goal_id comes from the "Weekly
     # goals" context block: for log_goal it names the goal being counted;
     # for add_goal it's set only when re-targeting an existing goal.

@@ -90,6 +90,7 @@ export default function ChatScreen({ navigation }) {
         commitmentCreated: result.intent === 'add_commitment' && result.commitment ? result.commitment.text : undefined,
         commitmentUpdated: result.intent === 'modify_commitment' && result.commitment ? result.commitment.text : undefined,
         goalTag: goalTagFor(result),
+        closedTag: closedTagFor(result),
       }
       setHistory((prev) => [...prev, assistantTurn].slice(-MAX_HISTORY_TURNS))
     } catch (err) {
@@ -199,6 +200,16 @@ function goalTagFor(result) {
   return undefined
 }
 
+// Small confirmation under the reply when chat closed commitments (ADR-0027).
+const CLOSED_TAG_PREFIX = { done: '✓ Done', abandoned: 'Dropped', deleted: '🗑 Deleted' }
+
+function closedTagFor(result) {
+  if (result.intent !== 'close_commitment' || !result.closed?.length) return undefined
+  const prefix = CLOSED_TAG_PREFIX[result.close_action]
+  if (!prefix) return undefined
+  return `${prefix}: ${result.closed.map((c) => c.text).join(', ')}`
+}
+
 function makeId() {
   idCounter += 1
   return `t${Date.now()}-${idCounter}`
@@ -233,6 +244,7 @@ function ChatBubble({ turn, isLatest, onChipTap, disabled }) {
       {turn.commitmentUpdated && (
         <Text style={styles.createdTag}>✏️ Updated: {turn.commitmentUpdated}</Text>
       )}
+      {turn.closedTag && <Text style={styles.createdTag}>{turn.closedTag}</Text>}
       {showChips && (
         <View style={styles.chipRow}>
           {turn.clarifyOptions.map((option) => (
